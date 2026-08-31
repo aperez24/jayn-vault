@@ -3,49 +3,37 @@ import FilesystemBrowser from './FilesystemBrowser.jsx'
 
 const lenses = {
   Daily: {
-    title: 'Daily passage ready.',
-    detail: 'Office File Server',
-    route: 'OneDrive',
-    time: 'Tomorrow · 06:00 AM',
-    metric: '428 GB',
-    value: '100',
-    suffix: '%',
-    kicker: 'NEXT PASSAGE',
-    telemetry: '428 GB QUEUED',
+    title: 'Daily passage ready.', detail: 'Office File Server', route: 'OneDrive', time: 'Tomorrow · 06:00 AM',
+    metric: '428 GB', value: '100', suffix: '%', kicker: 'NEXT PASSAGE', telemetry: '428 GB QUEUED',
   },
   Weekly: {
-    title: 'Weekly archive scheduled.',
-    detail: 'Accounting Archive',
-    route: 'Synology NAS',
-    time: 'Sunday · 02:00 AM',
-    metric: '86 GB',
-    value: '86',
-    suffix: 'GB',
-    kicker: 'ARCHIVE WINDOW',
-    telemetry: 'SUNDAY · 02:00 AM',
+    title: 'Weekly archive scheduled.', detail: 'Accounting Archive', route: 'Synology NAS', time: 'Sunday · 02:00 AM',
+    metric: '86 GB', value: '86', suffix: 'GB', kicker: 'ARCHIVE WINDOW', telemetry: 'SUNDAY · 02:00 AM',
   },
   Sources: {
-    title: 'Choose what moves.',
-    detail: 'Select the folder that JAYN Vault should protect',
-    route: 'All subfolders included',
-    time: 'Local / mounted storage',
-    metric: 'SRC',
-    value: '01',
-    suffix: '',
-    kicker: 'SOURCE NODE',
-    telemetry: 'READY TO SELECT',
+    title: 'Choose what moves.', detail: 'Select the folder that JAYN Vault should protect', route: 'All subfolders included', time: 'Local / mounted storage',
+    metric: 'SRC', value: '01', suffix: '', kicker: 'SOURCE NODE', telemetry: 'READY TO SELECT',
   },
   Destinations: {
-    title: 'Choose where it lands.',
-    detail: 'Select the folder that will receive the backup',
-    route: 'Writable storage',
-    time: 'Local / mounted storage',
-    metric: 'DST',
-    value: '02',
-    suffix: '',
-    kicker: 'DESTINATION ROUTE',
-    telemetry: 'READY TO SELECT',
+    title: 'Choose where it lands.', detail: 'Select the folder that will receive the backup', route: 'Writable storage', time: 'Local / mounted storage',
+    metric: 'DST', value: '02', suffix: '', kicker: 'DESTINATION ROUTE', telemetry: 'READY TO SELECT',
   },
+}
+
+function formatBytesParts(bytes) {
+  if (bytes == null || Number.isNaN(Number(bytes))) return { value: '—', unit: '' }
+  const amount = Number(bytes)
+  if (amount === 0) return { value: '0', unit: 'B' }
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  const index = Math.min(Math.floor(Math.log(amount) / Math.log(1024)), units.length - 1)
+  const scaled = amount / (1024 ** index)
+  const decimals = scaled >= 100 || index === 0 ? 0 : scaled >= 10 ? 1 : 2
+  return { value: scaled.toFixed(decimals).replace(/\.0+$|(?<=\.[0-9])0+$/, ''), unit: units[index] }
+}
+
+function formatBytes(bytes) {
+  const parts = formatBytesParts(bytes)
+  return `${parts.value}${parts.unit ? ` ${parts.unit}` : ''}`
 }
 
 function LensIcon({ name }) {
@@ -62,9 +50,7 @@ function LensIcon({ name }) {
 function ActionIcon({ running = false }) {
   return (
     <svg className={running ? 'action-icon is-running' : 'action-icon'} viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="12" r="8.5" />
-      <path className="action-arc" d="M12 3.5a8.5 8.5 0 0 1 7.2 4" />
-      <path className="action-play" d="m10 8.7 5 3.3-5 3.3z" />
+      <circle cx="12" cy="12" r="8.5" /><path className="action-arc" d="M12 3.5a8.5 8.5 0 0 1 7.2 4" /><path className="action-play" d="m10 8.7 5 3.3-5 3.3z" />
     </svg>
   )
 }
@@ -80,21 +66,36 @@ export default function App() {
   const [pickerKind, setPickerKind] = useState(null)
   const [selections, setSelections] = useState({ source: null, destination: null })
   const [storageRoots, setStorageRoots] = useState([])
+  const [storageStatus, setStorageStatus] = useState({ source: null, destination: null, capacity_ok: null, shortfall_bytes: 0 })
+
   const active = lenses[lens]
   const filesystemLens = lens === 'Sources' || lens === 'Destinations'
   const currentKind = lens === 'Sources' ? 'source' : lens === 'Destinations' ? 'destination' : null
   const selectionPath = currentKind ? selections[currentKind] : null
+  const capacityWarning = storageStatus.capacity_ok === false
+
+  async function refreshStorageStatus() {
+    try {
+      const response = await fetch('/api/storage/status')
+      const data = await response.json()
+      if (response.ok) setStorageStatus(data)
+    } catch {
+      // Keep the last known telemetry if a refresh temporarily fails.
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
     Promise.all([
       fetch('/api/config/selection').then((response) => response.json()),
       fetch('/api/fs/roots').then((response) => response.json()).catch(() => ({ roots: [] })),
+      fetch('/api/storage/status').then((response) => response.json()).catch(() => null),
     ])
-      .then(([selection, rootsData]) => {
+      .then(([selection, rootsData, status]) => {
         if (cancelled) return
         setSelections({ source: selection?.source || null, destination: selection?.destination || null })
         setStorageRoots(rootsData?.roots || [])
+        if (status) setStorageStatus(status)
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -108,37 +109,60 @@ export default function App() {
     return [root.name, ...relative.split('/').filter(Boolean)].join(' › ')
   }, [selectionPath, storageRoots])
 
-  const runBackup = () => {
+  const sourceSize = formatBytesParts(storageStatus.source?.bytes)
+  const destinationTotal = formatBytesParts(storageStatus.destination?.total_bytes)
+  const destinationFree = formatBytes(storageStatus.destination?.free_bytes)
+
+  let dialValue = active.value
+  let dialSuffix = active.suffix
+  let dialMetric = active.metric
+  let dialTime = selectionPath && filesystemLens ? 'READY' : active.time
+  let dialKicker = selectionPath && filesystemLens ? 'CONFIGURED' : active.kicker
+  let dialTelemetry = selectionPath && filesystemLens ? 'PATH SAVED' : active.telemetry
+
+  if (lens === 'Sources' && storageStatus.source) {
+    dialValue = sourceSize.value
+    dialSuffix = sourceSize.unit
+    dialMetric = `${storageStatus.source.files.toLocaleString()} FILES`
+    dialTime = `${storageStatus.source.directories.toLocaleString()} FOLDERS`
+    dialKicker = 'SOURCE SIZE'
+    dialTelemetry = 'LIVE STORAGE INDEX'
+  }
+
+  if (lens === 'Destinations' && storageStatus.destination) {
+    dialValue = destinationTotal.value
+    dialSuffix = destinationTotal.unit
+    dialMetric = capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationFree} FREE`
+    dialTime = capacityWarning ? 'CAPACITY ALERT' : 'CAPACITY READY'
+    dialKicker = 'TOTAL CAPACITY'
+    dialTelemetry = capacityWarning ? 'INSUFFICIENT FREE SPACE' : 'FREE SPACE VERIFIED'
+  }
+
+  const runBackup = async () => {
+    await refreshStorageStatus()
+    if (storageStatus.capacity_ok === false) return
     setRunning(true)
     window.setTimeout(() => setRunning(false), 2200)
   }
 
-  const selectLens = (name) => {
-    setLens(name)
-    setSaved(false)
-  }
-
+  const selectLens = (name) => { setLens(name); setSaved(false) }
   const openPicker = (kind) => setPickerKind(kind)
 
   const saveSelection = (kind, path) => {
     setSelections((current) => ({ ...current, [kind]: path }))
     setSaved(true)
+    window.setTimeout(refreshStorageStatus, 120)
   }
 
   return (
-    <main className="vault-shell">
-      <div className="ambient" />
-      <div className="mesh" />
+    <main className={`vault-shell${capacityWarning ? ' capacity-warning' : ''}`}>
+      <div className="ambient" /><div className="mesh" />
 
       <header className="topbar">
         <button className="brand" onClick={() => selectLens('Daily')} aria-label="JAYN Vault home">
-          <img className="brand-emblem" src="/jayn-emblem.png" alt="" />
-          <span className="vault-word"><small>JAYN</small><b>VAULT</b></span>
+          <img className="brand-emblem" src="/jayn-emblem.png" alt="" /><span className="vault-word"><small>JAYN</small><b>VAULT</b></span>
         </button>
-        <div className="top-meta">
-          <span><i /> BRIDGE ONLINE</span>
-          <button className="profile">AP</button>
-        </div>
+        <div className="top-meta"><span><i /> BRIDGE ONLINE</span><button className="profile">AP</button></div>
       </header>
 
       <section className="hero">
@@ -146,42 +170,30 @@ export default function App() {
           <div className="eyebrow"><span>JAYN VAULT</span><b /><em>CONTINUITY, IN MOTION</em></div>
           <h1>Everything important<br /><i>keeps moving.</i></h1>
           <p>A quiet control surface for the files that keep the office moving forward.</p>
-          <button className="run" onClick={runBackup}>
-            <ActionIcon running={running} />
-            <span>{running ? 'BACKUP IN PROGRESS' : 'RUN BACKUP NOW'}</span>
-            <ChevronIcon />
+          <button className="run" onClick={runBackup} disabled={capacityWarning} title={capacityWarning ? 'Destination does not have enough free space for the selected source.' : undefined}>
+            <ActionIcon running={running} /><span>{capacityWarning ? 'CAPACITY REQUIRED' : running ? 'BACKUP IN PROGRESS' : 'RUN BACKUP NOW'}</span><ChevronIcon />
           </button>
-          <small className="last-run">{running ? 'Synchronizing with office node…' : 'Last successful passage · Today 06:00 AM'}</small>
+          <small className={`last-run${capacityWarning ? ' is-warning' : ''}`}>
+            {capacityWarning ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.` : running ? 'Synchronizing with office node…' : 'Last successful passage · Today 06:00 AM'}
+          </small>
         </div>
 
-        <div className={`dial-wrap mode-${lens.toLowerCase()}`}>
-          <div className="dial dial-outer" />
-          <div className="dial dial-middle" />
-          <div className="dial-cross cross-a" />
-          <div className="dial-cross cross-b" />
-          <div className="scan-beam" />
-          <div className="dial-burst" />
-          <div className="telemetry-streak" />
-          <div className="data-node node-a" />
-          <div className="data-node node-b" />
+        <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
+          <div className="dial dial-outer" /><div className="dial dial-middle" /><div className="dial-cross cross-a" /><div className="dial-cross cross-b" /><div className="scan-beam" /><div className="dial-burst" /><div className="telemetry-streak" /><div className="data-node node-a" /><div className="data-node node-b" />
 
-          <div key={`core-${lens}-${selectionPath || 'empty'}`} className="dial-core">
+          <div key={`core-${lens}-${selectionPath || 'empty'}-${dialValue}`} className="dial-core">
             <img className="core-emblem" src="/jayn-emblem.png" alt="" />
             <small>{lens.toUpperCase()} LENS</small>
-            <strong>{active.value}<sup>{active.suffix}</sup></strong>
-            <em>{selectionPath && filesystemLens ? 'CONFIGURED' : active.kicker}</em>
-            <span className="core-foot">LIVE TELEMETRY · {selectionPath && filesystemLens ? 'PATH SAVED' : active.telemetry}</span>
+            <strong>{dialValue}<sup>{dialSuffix}</sup></strong>
+            <em>{dialKicker}</em>
+            <span className="core-foot">LIVE TELEMETRY · {dialTelemetry}</span>
             <div className="core-rule" />
-            <h3>{selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
+            <h3>{capacityWarning && lens === 'Destinations' ? 'Destination capacity low.' : selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
             <p title={selectionPath || undefined}>{selectionPath ? friendlySelectionPath : active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
             <div className="core-actions">
-              <strong>{active.metric}</strong>
-              <small>{selectionPath && filesystemLens ? 'READY' : active.time}</small>
+              <strong>{dialMetric}</strong><small>{dialTime}</small>
               {filesystemLens ? (
-                <button onClick={() => openPicker(currentKind)}>
-                  {selectionPath ? 'CHANGE FOLDER' : 'CHOOSE FOLDER'}
-                  <ChevronIcon />
-                </button>
+                <button onClick={() => openPicker(currentKind)}>{selectionPath ? 'CHANGE FOLDER' : 'CHOOSE FOLDER'}<ChevronIcon /></button>
               ) : (
                 <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>
               )}
@@ -191,51 +203,33 @@ export default function App() {
       </section>
 
       <section className="control-surface">
-        <div className="surface-tags">
-          <span>LOCAL NODE</span>
-          <span>DAILY <b>06:00</b></span>
-          <span>WEEKLY <b>SUN</b></span>
-        </div>
+        <div className="surface-tags"><span>LOCAL NODE</span><span>DAILY <b>06:00</b></span><span>WEEKLY <b>SUN</b></span></div>
         <div className="surface-head">
           <div><span className="eyebrow"><span>CONTROL SURFACE</span><b /></span><h2>Choose a lens.</h2></div>
-          <span className="surface-status"><i /> API ONLINE</span>
+          <span className={`surface-status${capacityWarning ? ' warning' : ''}`}><i /> {capacityWarning ? 'CAPACITY ALERT' : 'API ONLINE'}</span>
         </div>
         <div className="lens-nav">
           {Object.keys(lenses).map((name, index) => (
-            <button className={lens === name ? 'selected' : ''} onClick={() => selectLens(name)} key={name}>
-              <span>0{index + 1}</span><LensIcon name={name} /><label>{name}</label>
-            </button>
+            <button className={lens === name ? 'selected' : ''} onClick={() => selectLens(name)} key={name}><span>0{index + 1}</span><LensIcon name={name} /><label>{name}</label></button>
           ))}
         </div>
 
         {filesystemLens && (
-          <div className="selection-summary">
+          <div className={`selection-summary${capacityWarning && lens === 'Destinations' ? ' warning' : ''}`}>
             <div className="selection-summary-icon"><LensIcon name={lens} /></div>
             <div className="selection-summary-copy">
               <span>{lens === 'Sources' ? 'SOURCE FOLDER' : 'DESTINATION FOLDER'}</span>
               <strong title={selectionPath || ''}>{selectionPath ? friendlySelectionPath : 'No folder selected'}</strong>
-              <small>{lens === 'Sources' ? 'The selected folder and all of its subfolders will be protected.' : 'Backup data will be written to this location.'}</small>
+              <small>{lens === 'Sources' && storageStatus.source ? `${formatBytes(storageStatus.source.bytes)} · ${storageStatus.source.files.toLocaleString()} files` : lens === 'Destinations' && storageStatus.destination ? `${destinationFree} free of ${formatBytes(storageStatus.destination.total_bytes)}` : lens === 'Sources' ? 'The selected folder and all of its subfolders will be protected.' : 'Backup data will be written to this location.'}</small>
             </div>
-            <button type="button" className="selection-summary-action" onClick={() => openPicker(currentKind)}>
-              {selectionPath ? 'Change folder' : 'Choose folder'}
-              <ChevronIcon />
-            </button>
+            <button type="button" className="selection-summary-action" onClick={() => openPicker(currentKind)}>{selectionPath ? 'Change folder' : 'Choose folder'}<ChevronIcon /></button>
           </div>
         )}
       </section>
 
-      <footer className="footer">
-        <span>© 2026 JAYN Construction, Inc. All Rights Reserved.</span>
-        <span>BUILT FOR GENERATIONS <b>·</b> VAULT / 01</span>
-      </footer>
+      <footer className="footer"><span>© 2026 JAYN Construction, Inc. All Rights Reserved.</span><span>BUILT FOR GENERATIONS <b>·</b> VAULT / 01</span></footer>
 
-      {pickerKind && (
-        <FilesystemBrowser
-          kind={pickerKind}
-          onClose={() => setPickerKind(null)}
-          onSaved={(path) => saveSelection(pickerKind, path)}
-        />
-      )}
+      {pickerKind && <FilesystemBrowser kind={pickerKind} onClose={() => setPickerKind(null)} onSaved={(path) => saveSelection(pickerKind, path)} />}
     </main>
   )
 }
