@@ -23,6 +23,7 @@ node_modules/
 dist/
 .next/
 .vite/
+source/public/
 
 # Local runtime data
 data/
