@@ -4,13 +4,13 @@
  */
 .dial-scaffold {
   box-sizing: border-box;
-  padding: 14px 20px 12px !important;
+  padding: 18px 20px 14px !important;
   display: grid !important;
-  grid-template-rows: 16px 42px 16px 18px 14px 25px 18px 48px;
+  grid-template-rows: 18px 44px 17px 20px 14px 26px 20px 64px;
   align-content: center;
   justify-items: center;
   text-align: center;
-  row-gap: 2px;
+  row-gap: 3px;
 }
 
 .dial-scaffold > * {
@@ -19,7 +19,7 @@
 }
 
 .dial-slot-label {
-  align-self: end;
+  align-self: center;
   font-size: 8px !important;
   line-height: 1;
   letter-spacing: .16em;
@@ -31,7 +31,7 @@
 }
 
 .dial-slot-kicker {
-  align-self: start;
+  align-self: center;
   font-size: 8px !important;
   line-height: 1.15;
 }
@@ -60,14 +60,21 @@
   text-overflow: ellipsis;
 }
 
+/* Two-tier bottom zone shared by every lens:
+ * row 1 = secondary metric + meta
+ * row 2 = centered action / selected folder name
+ */
 .dial-slot-actions {
   align-self: stretch;
   width: min(220px, 100%);
-  min-height: 48px;
+  min-height: 64px;
   display: grid !important;
-  grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.2fr);
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 22px 38px;
   align-items: center;
-  column-gap: 8px;
+  justify-items: center;
+  column-gap: 12px;
+  row-gap: 4px;
 }
 
 .dial-slot-actions > strong,
@@ -77,13 +84,29 @@
   min-width: 0;
 }
 
-.dial-slot-actions > strong { justify-self: end; white-space: nowrap; }
+.dial-slot-actions > strong {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  white-space: nowrap;
+}
+
 .dial-slot-actions > small {
-  justify-self: center;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: start;
   white-space: nowrap;
   font-size: 7.5px !important;
 }
-.dial-slot-actions > button { justify-self: start; max-width: 100%; }
+
+.dial-slot-actions > button {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  justify-self: center;
+  align-self: center;
+  max-width: 200px;
+  text-align: center;
+}
 
 .dial-slot-actions .folder-name-button {
   font-size: 14px !important;
