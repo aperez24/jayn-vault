@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import FilesystemBrowser from './FilesystemBrowser.jsx'
 
 const lenses = {
@@ -25,26 +25,26 @@ const lenses = {
     telemetry: 'SUNDAY · 02:00 AM',
   },
   Sources: {
-    title: 'Select a source.',
-    detail: 'Browse any path visible to this Vault node',
-    route: 'Saved source',
+    title: 'Choose what moves.',
+    detail: 'Select the folder that JAYN Vault should protect',
+    route: 'All subfolders included',
     time: 'Local / mounted storage',
-    metric: 'FS',
+    metric: 'SRC',
     value: '01',
     suffix: '',
     kicker: 'SOURCE NODE',
-    telemetry: 'BROWSER READY',
+    telemetry: 'READY TO SELECT',
   },
   Destinations: {
-    title: 'Select a destination.',
-    detail: 'Browse any writable path visible to this Vault node',
-    route: 'Saved destination',
+    title: 'Choose where it lands.',
+    detail: 'Select the folder that will receive the backup',
+    route: 'Writable storage',
     time: 'Local / mounted storage',
-    metric: 'FS',
+    metric: 'DST',
     value: '02',
     suffix: '',
     kicker: 'DESTINATION ROUTE',
-    telemetry: 'BROWSER READY',
+    telemetry: 'READY TO SELECT',
   },
 }
 
@@ -77,9 +77,23 @@ export default function App() {
   const [lens, setLens] = useState('Daily')
   const [running, setRunning] = useState(false)
   const [saved, setSaved] = useState(false)
-  const [selectionPath, setSelectionPath] = useState('')
+  const [pickerKind, setPickerKind] = useState(null)
+  const [selections, setSelections] = useState({ source: null, destination: null })
   const active = lenses[lens]
   const filesystemLens = lens === 'Sources' || lens === 'Destinations'
+  const currentKind = lens === 'Sources' ? 'source' : lens === 'Destinations' ? 'destination' : null
+  const selectionPath = currentKind ? selections[currentKind] : null
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/config/selection')
+      .then((response) => response.json())
+      .then((data) => {
+        if (!cancelled) setSelections({ source: data?.source || null, destination: data?.destination || null })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   const runBackup = () => {
     setRunning(true)
@@ -89,7 +103,13 @@ export default function App() {
   const selectLens = (name) => {
     setLens(name)
     setSaved(false)
-    setSelectionPath('')
+  }
+
+  const openPicker = (kind) => setPickerKind(kind)
+
+  const saveSelection = (kind, path) => {
+    setSelections((current) => ({ ...current, [kind]: path }))
+    setSaved(true)
   }
 
   return (
@@ -132,19 +152,26 @@ export default function App() {
           <div className="data-node node-a" />
           <div className="data-node node-b" />
 
-          <div key={`core-${lens}-${selectionPath}`} className="dial-core">
+          <div key={`core-${lens}-${selectionPath || 'empty'}`} className="dial-core">
             <span className="core-mark">J</span>
             <small>{lens.toUpperCase()} LENS</small>
             <strong>{active.value}<sup>{active.suffix}</sup></strong>
-            <em>{saved && filesystemLens ? 'CONFIGURED' : active.kicker}</em>
-            <span className="core-foot">LIVE TELEMETRY · {saved && filesystemLens ? 'PATH SAVED' : active.telemetry}</span>
+            <em>{selectionPath && filesystemLens ? 'CONFIGURED' : active.kicker}</em>
+            <span className="core-foot">LIVE TELEMETRY · {selectionPath && filesystemLens ? 'PATH SAVED' : active.telemetry}</span>
             <div className="core-rule" />
-            <h3>{saved && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
+            <h3>{selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
             <p>{selectionPath || active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
             <div className="core-actions">
               <strong>{active.metric}</strong>
-              <small>{saved && filesystemLens ? 'READY' : active.time}</small>
-              {!filesystemLens && <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>}
+              <small>{selectionPath && filesystemLens ? 'READY' : active.time}</small>
+              {filesystemLens ? (
+                <button onClick={() => openPicker(currentKind)}>
+                  {selectionPath ? 'CHANGE FOLDER' : 'CHOOSE FOLDER'}
+                  <ChevronIcon />
+                </button>
+              ) : (
+                <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>
+              )}
             </div>
           </div>
         </div>
@@ -168,17 +195,19 @@ export default function App() {
           ))}
         </div>
 
-        {lens === 'Sources' && (
-          <FilesystemBrowser
-            kind="source"
-            onSaved={(path) => { setSelectionPath(path); setSaved(true) }}
-          />
-        )}
-        {lens === 'Destinations' && (
-          <FilesystemBrowser
-            kind="destination"
-            onSaved={(path) => { setSelectionPath(path); setSaved(true) }}
-          />
+        {filesystemLens && (
+          <div className="selection-summary">
+            <div className="selection-summary-icon"><LensIcon name={lens} /></div>
+            <div className="selection-summary-copy">
+              <span>{lens === 'Sources' ? 'SOURCE FOLDER' : 'DESTINATION FOLDER'}</span>
+              <strong title={selectionPath || ''}>{selectionPath || 'No folder selected'}</strong>
+              <small>{lens === 'Sources' ? 'The selected folder and all of its subfolders will be protected.' : 'Backup data will be written to this location.'}</small>
+            </div>
+            <button type="button" className="selection-summary-action" onClick={() => openPicker(currentKind)}>
+              {selectionPath ? 'Change folder' : 'Choose folder'}
+              <ChevronIcon />
+            </button>
+          </div>
         )}
       </section>
 
@@ -186,6 +215,14 @@ export default function App() {
         <span>© 2026 JAYN Construction, Inc. All Rights Reserved.</span>
         <span>BUILT FOR GENERATIONS <b>·</b> VAULT / 01</span>
       </footer>
+
+      {pickerKind && (
+        <FilesystemBrowser
+          kind={pickerKind}
+          onClose={() => setPickerKind(null)}
+          onSaved={(path) => saveSelection(pickerKind, path)}
+        />
+      )}
     </main>
   )
 }
