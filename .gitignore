@@ -1,0 +1,28 @@
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Environment/secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*
+secrets*
+
+# Logs/temp
+*.log
+tmp/
+temp/
+
+# Node / future source development
+node_modules/
+dist/
+.next/
+.vite/
+
+# Local runtime data
+data/
