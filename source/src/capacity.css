@@ -1,0 +1,47 @@
+/* Storage telemetry and capacity fail-safe states. */
+
+.run:disabled {
+  cursor: not-allowed;
+  opacity: .72;
+  border-color: #d9742f88;
+  color: #d9a57f;
+  background: #d9742f0a;
+}
+
+.last-run.is-warning {
+  color: #d9a57f !important;
+}
+
+.surface-status.warning {
+  color: #d9a57f;
+}
+
+.surface-status.warning i {
+  background: #d9742f !important;
+  box-shadow: 0 0 8px #d9742f80;
+}
+
+.selection-summary.warning {
+  border-bottom-color: #d9742f55;
+}
+
+.selection-summary.warning .selection-summary-icon {
+  border-color: #d9742f66;
+}
+
+.dial-warning .dial-core > em,
+.dial-warning .core-foot,
+.dial-warning .core-actions > small {
+  color: #d9a57f !important;
+}
+
+.dial-warning .core-rule {
+  border-color: #d9742f88 !important;
+}
+
+.dial-core > strong sup {
+  margin-left: 3px;
+  font-size: .42em;
+  vertical-align: super;
+  letter-spacing: .04em;
+}
