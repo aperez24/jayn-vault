@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 
-const DEFAULT_START = '/mnt/jayn-vault/sources/jaynos'
-
 function FolderIcon() {
   return (
     <svg className="picker-folder-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -20,7 +18,8 @@ function CloseIcon() {
 }
 
 export default function FilesystemBrowser({ kind, onSaved, onClose }) {
-  const [currentPath, setCurrentPath] = useState(DEFAULT_START)
+  const [root, setRoot] = useState(null)
+  const [currentPath, setCurrentPath] = useState('')
   const [parent, setParent] = useState(null)
   const [items, setItems] = useState([])
   const [savedPath, setSavedPath] = useState(null)
@@ -52,15 +51,28 @@ export default function FilesystemBrowser({ kind, onSaved, onClose }) {
 
     async function initialize() {
       try {
-        const response = await fetch('/api/config/selection')
-        const selection = await response.json()
+        const [rootsResponse, selectionResponse] = await Promise.all([
+          fetch('/api/fs/roots'),
+          fetch('/api/config/selection'),
+        ])
+        const rootsData = await rootsResponse.json()
+        const selection = await selectionResponse.json()
+        const availableRoots = rootsData?.roots || []
         const configured = selection?.[kind] || null
+
+        let activeRoot = availableRoots.find((candidate) => configured?.startsWith(candidate.path)) || availableRoots[0]
+        if (!activeRoot) throw new Error('No storage locations are available to JAYN Vault.')
+
         if (!cancelled) {
+          setRoot(activeRoot)
           setSavedPath(configured)
-          await loadDirectory(configured || DEFAULT_START)
+          await loadDirectory(configured || activeRoot.path)
         }
-      } catch {
-        if (!cancelled) await loadDirectory(DEFAULT_START)
+      } catch (err) {
+        if (!cancelled) {
+          setError(err.message || 'Unable to load storage locations.')
+          setLoading(false)
+        }
       }
     }
 
@@ -103,16 +115,35 @@ export default function FilesystemBrowser({ kind, onSaved, onClose }) {
     [items],
   )
 
+  const relativeParts = useMemo(() => {
+    if (!root || !currentPath.startsWith(root.path)) return []
+    const relative = currentPath.slice(root.path.length).replace(/^\/+/, '')
+    return relative ? relative.split('/').filter(Boolean) : []
+  }, [currentPath, root])
+
   const breadcrumbs = useMemo(() => {
-    const parts = currentPath.split('/').filter(Boolean)
-    const crumbs = [{ name: 'Root', path: '/' }]
-    let running = ''
-    for (const part of parts) {
+    if (!root) return []
+    const crumbs = [{ name: root.name, path: root.path }]
+    let running = root.path
+    for (const part of relativeParts) {
       running += `/${part}`
       crumbs.push({ name: part, path: running })
     }
     return crumbs
-  }, [currentPath])
+  }, [root, relativeParts])
+
+  const displayPath = useMemo(() => {
+    if (!root) return ''
+    return [root.name, ...relativeParts].join(' / ')
+  }, [root, relativeParts])
+
+  const savedDisplayPath = useMemo(() => {
+    if (!savedPath || !root || !savedPath.startsWith(root.path)) return savedPath
+    const relative = savedPath.slice(root.path.length).replace(/^\/+/, '')
+    return [root.name, ...relative.split('/').filter(Boolean)].join(' / ')
+  }, [savedPath, root])
+
+  const canGoUp = Boolean(root && parent && currentPath !== root.path && currentPath.startsWith(root.path))
 
   return (
     <div className="picker-overlay" role="presentation" onMouseDown={(event) => {
@@ -133,7 +164,7 @@ export default function FilesystemBrowser({ kind, onSaved, onClose }) {
         <nav className="picker-breadcrumbs" aria-label="Current folder path">
           {breadcrumbs.map((crumb, index) => (
             <span key={crumb.path}>
-              {index > 0 && <i>/</i>}
+              {index > 0 && <i>›</i>}
               <button type="button" onClick={() => loadDirectory(crumb.path)} disabled={loading || crumb.path === currentPath}>
                 {crumb.name}
               </button>
@@ -144,9 +175,9 @@ export default function FilesystemBrowser({ kind, onSaved, onClose }) {
         <div className="picker-location-bar">
           <div className="picker-location-copy">
             <span>CURRENT LOCATION</span>
-            <strong title={currentPath}>{currentPath}</strong>
+            <strong title={currentPath}>{displayPath}</strong>
           </div>
-          {parent && (
+          {canGoUp && (
             <button type="button" className="picker-up" onClick={() => loadDirectory(parent)} disabled={loading}>
               ↑ &nbsp; Up
             </button>
@@ -179,11 +210,11 @@ export default function FilesystemBrowser({ kind, onSaved, onClose }) {
         <footer className="picker-footer">
           <div className="picker-saved">
             <span>{savedPath ? `CURRENT ${label.toUpperCase()}` : `${label.toUpperCase()} NOT YET SET`}</span>
-            {savedPath && <strong title={savedPath}>{savedPath}</strong>}
+            {savedPath && <strong title={savedPath}>{savedDisplayPath}</strong>}
           </div>
           <div className="picker-actions">
             <button type="button" className="picker-cancel" onClick={onClose}>Cancel</button>
-            <button type="button" className="picker-select" onClick={saveCurrent} disabled={saving || loading}>
+            <button type="button" className="picker-select" onClick={saveCurrent} disabled={saving || loading || !currentPath}>
               {saving ? 'Saving…' : 'Select this folder'}
             </button>
           </div>
