@@ -11,6 +11,9 @@ from pydantic import BaseModel
 app = FastAPI(title="JAYN Vault API", version="0.1.0")
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
+DEFAULT_STORAGE_ROOTS = [
+    {"id": "jaynos", "name": "jaynOS", "path": "/mnt/jayn-vault/sources/jaynos"},
+]
 
 
 class SelectionRequest(BaseModel):
@@ -61,9 +64,43 @@ def _resolve_dir(raw_path: str) -> Path:
     return resolved
 
 
+def _storage_roots() -> list[dict]:
+    raw = os.getenv("JAYN_VAULT_STORAGE_ROOTS")
+    roots = DEFAULT_STORAGE_ROOTS
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                roots = parsed
+        except json.JSONDecodeError:
+            pass
+
+    result = []
+    for root in roots:
+        try:
+            path = _resolve_dir(str(root.get("path", "")))
+        except HTTPException:
+            continue
+        result.append(
+            {
+                "id": str(root.get("id") or path.name),
+                "name": str(root.get("name") or path.name),
+                "path": str(path),
+                "readable": os.access(path, os.R_OK | os.X_OK),
+                "writable": os.access(path, os.W_OK | os.X_OK),
+            }
+        )
+    return result
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "service": "jayn-vault-api"}
+
+
+@app.get("/api/fs/roots")
+def filesystem_roots() -> dict:
+    return {"roots": _storage_roots()}
 
 
 @app.get("/api/fs/list")
