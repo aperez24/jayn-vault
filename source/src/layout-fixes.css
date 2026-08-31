@@ -29,15 +29,6 @@
 .dial-middle { animation-duration: 48s !important; opacity: .66; }
 .scan-beam { animation-duration: 9s !important; opacity: .34; }
 
-/* Use the real JAYN emblem in the center dial instead of the temporary J tile. */
-.core-emblem {
-  width: 24px;
-  height: 24px;
-  object-fit: contain;
-  display: block;
-  margin: 0 auto 6px;
-}
-
 /* Establish a legible minimum type scale inside the radial instrument. */
 .dial-core > small {
   font-size: 8px !important;
@@ -77,6 +68,31 @@
   font-size: 7.5px !important;
   letter-spacing: .14em;
 }
+
+/* Rebalance the dial vertically now that the emblem has been removed. */
+.dial-core-spread {
+  padding-top: 18px !important;
+  padding-bottom: 14px !important;
+}
+
+.dial-core-spread > small { margin-bottom: 8px !important; }
+.dial-core-spread > strong { margin-bottom: 5px !important; }
+.dial-core-spread > em { margin-bottom: 8px !important; }
+.dial-core-spread .core-foot { margin-bottom: 10px !important; }
+.dial-core-spread .core-rule { margin-top: 2px !important; margin-bottom: 12px !important; }
+.dial-core-spread > h3 { margin-bottom: 5px !important; }
+.dial-core-spread > p { margin-bottom: 12px !important; }
+.dial-core-spread .core-actions { margin-top: 2px !important; }
+
+.folder-name-button {
+  font-size: 14px !important;
+  font-weight: 300 !important;
+  letter-spacing: .02em !important;
+  text-transform: none !important;
+  padding-top: 5px !important;
+  padding-bottom: 5px !important;
+}
+.folder-name-button .chevron-icon { width: 14px; height: 14px; }
 
 /* Compact source / destination summary that stays in the control surface. */
 .selection-summary {
