@@ -138,7 +138,7 @@ export default function App() {
     <div className="ambient" /><div className="mesh" />
     <header className="topbar">
       <button className="brand" onClick={() => selectLens('Daily')} aria-label="JAYN Vault home"><img className="brand-emblem" src="/jayn-emblem.png" alt="" /><span className="vault-word"><small>JAYN</small><b>VAULT</b></span></button>
-      <div className="top-meta"><span><i /> BRIDGE ONLINE</span><button className="profile">AP</button></div>
+      <div className="top-meta"><button className="profile">AP</button></div>
     </header>
 
     <section className="hero">
@@ -152,11 +152,11 @@ export default function App() {
 
       <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
         <div className="dial dial-outer" /><div className="dial dial-middle" /><div className="dial-cross cross-a" /><div className="dial-cross cross-b" /><div className="scan-beam" /><div className="dial-burst" /><div className="telemetry-streak" /><div className="data-node node-a" /><div className="data-node node-b" />
-        <div key={`core-${lens}-${selectionPath || 'empty'}-${dialValue}`} className="dial-core">
+        <div key={`core-${lens}-${selectionPath || 'empty'}-${dialValue}`} className="dial-core dial-core-spread">
           <small>{lens.toUpperCase()} LENS</small><strong>{dialValue}<sup>{dialSuffix}</sup></strong><em>{dialKicker}</em><span className="core-foot">LIVE TELEMETRY · {dialTelemetry}</span><div className="core-rule" />
           <h3>{capacityWarning && lens === 'Destinations' ? 'Destination capacity low.' : selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
           <p title={selectionPath || undefined}>{selectionPath ? friendlySelectionPath : active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
-          <div className="core-actions"><strong>{dialMetric}</strong><small>{dialTime}</small>{filesystemLens ? <button onClick={() => openPicker(currentKind)}>{selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'}<ChevronIcon /></button> : <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>}</div>
+          <div className="core-actions"><strong>{dialMetric}</strong><small>{dialTime}</small>{filesystemLens ? <button className={selectionPath ? 'folder-name-button' : ''} onClick={() => openPicker(currentKind)}>{selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'}<ChevronIcon /></button> : <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>}</div>
         </div>
       </div>
     </section>
