@@ -1,23 +1,11 @@
 /* Targeted layout corrections for the reconstructed self-hosted shell. */
 
-/*
- * The recovered hero composition is correct, but the control surface is
- * vertically displaced too far below it in the reconstructed React shell.
- * Pull the entire lens-selection block upward while preserving its internal
- * spacing, and reclaim the same amount of document flow so the footer follows
- * it instead of being pushed below the viewport.
- */
 .control-surface {
   transform: translateY(-68px);
   margin-bottom: -68px;
 }
 
-/*
- * Coordinate the radial accents as one instrument. The recovered stylesheet
- * had independent full-circle reveal animations (1.25s / 1.05s) fighting the
- * .85s lens-position transition. Keep the readout entrance animation, but make
- * every orange ring accent share the selected lens angle, duration and easing.
- */
+/* Coordinate the radial accents as one instrument. */
 .dial-wrap {
   --lens-angle: 0deg;
   --dial-motion: 850ms cubic-bezier(.2, .8, .2, 1);
@@ -35,31 +23,114 @@
   will-change: transform;
 }
 
-.dial-outer::after {
-  transform: rotate(var(--lens-angle)) !important;
+.dial-outer::after { transform: rotate(var(--lens-angle)) !important; }
+.dial-burst { opacity: .72; transform: rotate(calc(var(--lens-angle) - 8deg)); }
+.telemetry-streak { opacity: .34; transform: rotate(calc(var(--lens-angle) + 11deg)); }
+.dial-middle { animation-duration: 48s !important; opacity: .66; }
+.scan-beam { animation-duration: 9s !important; opacity: .34; }
+
+/* Filesystem browser shown only in Sources / Destinations. */
+.fs-browser {
+  border-bottom: 1px solid var(--line);
+  padding: 18px 0 10px;
 }
 
-.dial-burst {
-  opacity: .72;
-  transform: rotate(calc(var(--lens-angle) - 8deg));
+.fs-browser-head,
+.fs-toolbar,
+.fs-row {
+  display: flex;
+  align-items: center;
 }
 
-.telemetry-streak {
-  opacity: .34;
-  transform: rotate(calc(var(--lens-angle) + 11deg));
+.fs-browser-head {
+  justify-content: space-between;
+  gap: 20px;
 }
 
-/* The continuous middle reference ring is intentionally very subdued. */
-.dial-middle {
-  animation-duration: 48s !important;
-  opacity: .66;
+.fs-browser-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 
-/* Keep the scanning beam ambient rather than competing with lens changes. */
-.scan-beam {
-  animation-duration: 9s !important;
-  opacity: .34;
+.fs-kicker {
+  color: #717d75;
+  letter-spacing: .18em;
+  font-size: 7px;
 }
+
+.fs-browser-head strong {
+  font-size: 13px;
+  font-weight: 300;
+}
+
+.fs-select,
+.fs-toolbar button {
+  border: 1px solid var(--line);
+  color: #aeb8b0;
+  background: #0b0d0c99;
+  cursor: pointer;
+  letter-spacing: .11em;
+  font: 7px inherit;
+}
+
+.fs-select {
+  border-color: #f6821f73;
+  padding: 10px 12px;
+}
+
+.fs-select:hover,
+.fs-toolbar button:hover { color: var(--orange); border-color: #f6821f73; }
+.fs-select:disabled,
+.fs-toolbar button:disabled { opacity: .38; cursor: default; }
+
+.fs-path {
+  border-left: 1px solid var(--orange);
+  color: #b3bcb5;
+  background: #0c0f0d99;
+  margin-top: 13px;
+  padding: 10px 12px;
+  font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fs-toolbar {
+  justify-content: space-between;
+  padding: 9px 0;
+}
+
+.fs-toolbar button { padding: 6px 8px; }
+.fs-toolbar span { color: #667269; letter-spacing: .12em; font-size: 7px; }
+
+.fs-list {
+  max-height: 250px;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.fs-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #eaefe812;
+  background: transparent;
+  color: #89958d;
+  cursor: pointer;
+  text-align: left;
+  padding: 10px 7px;
+  font: 9px inherit;
+  gap: 10px;
+}
+
+.fs-row:hover { color: var(--ink); background: #ffffff05; }
+.fs-folder { color: var(--orange); font-size: 14px; }
+.fs-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fs-permission { color: #657168; letter-spacing: .12em; font-size: 7px; }
+.fs-arrow { color: var(--orange); }
+.fs-empty { color: #68736b; padding: 18px 7px; font-size: 9px; }
+.fs-error { color: #d9a47a; border: 1px solid #f6821f38; padding: 9px 10px; margin-bottom: 8px; font-size: 9px; }
+.fs-saved { color: #6f7a72; letter-spacing: .08em; padding: 9px 0 4px; font-size: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) {
   .dial-outer::after,
@@ -77,4 +148,11 @@
     transform: translateY(-36px);
     margin-bottom: -36px;
   }
+
+  .fs-browser-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .fs-select { width: 100%; }
 }
