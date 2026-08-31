@@ -149,8 +149,8 @@ export default function App() {
           <div className="dial-cross cross-a" />
           <div className="dial-cross cross-b" />
           <div className="scan-beam" />
-          <div key={`burst-${lens}`} className="dial-burst" />
-          <div key={`streak-${lens}`} className="telemetry-streak" />
+          <div className="dial-burst" />
+          <div className="telemetry-streak" />
           <div className="data-node node-a" />
           <div className="data-node node-b" />
 
