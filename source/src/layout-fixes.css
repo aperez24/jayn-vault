@@ -1,0 +1,20 @@
+/* Targeted layout corrections for the reconstructed self-hosted shell. */
+
+/*
+ * The recovered hero composition is correct, but the control surface is
+ * vertically displaced too far below it in the reconstructed React shell.
+ * Pull the entire lens-selection block upward while preserving its internal
+ * spacing, and reclaim the same amount of document flow so the footer follows
+ * it instead of being pushed below the viewport.
+ */
+.control-surface {
+  transform: translateY(-68px);
+  margin-bottom: -68px;
+}
+
+@media (max-width: 900px) {
+  .control-surface {
+    transform: translateY(-36px);
+    margin-bottom: -36px;
+  }
+}
