@@ -1,0 +1,110 @@
+/* One shared radial dial scaffold for Daily, Weekly, Sources and Destinations. */
+.dial-scaffold {
+  box-sizing: border-box;
+  height: 100%;
+  padding: 20px 24px 18px !important;
+  display: grid !important;
+  grid-template-rows: 18px 48px 18px 20px 18px 28px 20px 54px;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  row-gap: 3px;
+}
+
+.dial-scaffold > * {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+.dial-slot-label {
+  align-self: end;
+  font-size: 8px !important;
+  line-height: 1;
+  letter-spacing: .16em;
+}
+
+.dial-slot-value {
+  align-self: center;
+  line-height: .95 !important;
+}
+
+.dial-slot-kicker {
+  align-self: start;
+  font-size: 8px !important;
+  line-height: 1.15;
+}
+
+.dial-slot-telemetry {
+  align-self: center;
+  font-size: 7.5px !important;
+  line-height: 1.25;
+}
+
+.dial-slot-rule {
+  align-self: center;
+}
+
+.dial-slot-title {
+  align-self: end;
+  font-size: 12px !important;
+  line-height: 1.15;
+}
+
+.dial-slot-detail {
+  align-self: start;
+  max-width: 190px;
+  font-size: 8.5px !important;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dial-slot-actions {
+  align-self: stretch;
+  width: min(220px, 100%);
+  min-height: 54px;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.2fr);
+  align-items: center;
+  column-gap: 8px;
+}
+
+.dial-slot-actions > strong,
+.dial-slot-actions > small,
+.dial-slot-actions > button {
+  margin: 0 !important;
+  min-width: 0;
+}
+
+.dial-slot-actions > strong {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.dial-slot-actions > small {
+  justify-self: center;
+  white-space: nowrap;
+  font-size: 7.5px !important;
+}
+
+.dial-slot-actions > button {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.dial-slot-actions .folder-name-button {
+  font-size: 14px !important;
+  line-height: 1.1;
+  font-weight: 300 !important;
+  letter-spacing: .02em !important;
+  text-transform: none !important;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .dial-scaffold {
+    padding-left: 18px !important;
+    padding-right: 18px !important;
+  }
+}
