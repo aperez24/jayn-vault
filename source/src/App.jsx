@@ -91,6 +91,12 @@ export default function App() {
     return [root.name, ...relative.split('/').filter(Boolean)].join(' › ')
   }, [selectionPath, storageRoots])
 
+  const selectedFolderLabel = useMemo(() => {
+    if (!selectionPath) return ''
+    const parts = selectionPath.split('/').filter(Boolean)
+    return parts.length ? `/${parts[parts.length - 1]}` : '/'
+  }, [selectionPath])
+
   const sourceSize = formatBytesParts(storageStatus.source?.bytes)
   const destinationTotal = formatBytesParts(storageStatus.destination?.total_bytes)
   const destinationFree = formatBytes(storageStatus.destination?.free_bytes)
@@ -147,10 +153,10 @@ export default function App() {
       <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
         <div className="dial dial-outer" /><div className="dial dial-middle" /><div className="dial-cross cross-a" /><div className="dial-cross cross-b" /><div className="scan-beam" /><div className="dial-burst" /><div className="telemetry-streak" /><div className="data-node node-a" /><div className="data-node node-b" />
         <div key={`core-${lens}-${selectionPath || 'empty'}-${dialValue}`} className="dial-core">
-          <img className="core-emblem" src="/jayn-emblem.png" alt="" /><small>{lens.toUpperCase()} LENS</small><strong>{dialValue}<sup>{dialSuffix}</sup></strong><em>{dialKicker}</em><span className="core-foot">LIVE TELEMETRY · {dialTelemetry}</span><div className="core-rule" />
+          <small>{lens.toUpperCase()} LENS</small><strong>{dialValue}<sup>{dialSuffix}</sup></strong><em>{dialKicker}</em><span className="core-foot">LIVE TELEMETRY · {dialTelemetry}</span><div className="core-rule" />
           <h3>{capacityWarning && lens === 'Destinations' ? 'Destination capacity low.' : selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
           <p title={selectionPath || undefined}>{selectionPath ? friendlySelectionPath : active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
-          <div className="core-actions"><strong>{dialMetric}</strong><small>{dialTime}</small>{filesystemLens ? <button onClick={() => openPicker(currentKind)}>{selectionPath ? 'CHANGE FOLDER' : 'CHOOSE FOLDER'}<ChevronIcon /></button> : <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>}</div>
+          <div className="core-actions"><strong>{dialMetric}</strong><small>{dialTime}</small>{filesystemLens ? <button onClick={() => openPicker(currentKind)}>{selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'}<ChevronIcon /></button> : <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>}</div>
         </div>
       </div>
     </section>
