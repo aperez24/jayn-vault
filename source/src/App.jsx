@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import FilesystemBrowser from './FilesystemBrowser.jsx'
 
 const lenses = {
@@ -79,6 +79,7 @@ export default function App() {
   const [saved, setSaved] = useState(false)
   const [pickerKind, setPickerKind] = useState(null)
   const [selections, setSelections] = useState({ source: null, destination: null })
+  const [storageRoots, setStorageRoots] = useState([])
   const active = lenses[lens]
   const filesystemLens = lens === 'Sources' || lens === 'Destinations'
   const currentKind = lens === 'Sources' ? 'source' : lens === 'Destinations' ? 'destination' : null
@@ -86,14 +87,26 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/config/selection')
-      .then((response) => response.json())
-      .then((data) => {
-        if (!cancelled) setSelections({ source: data?.source || null, destination: data?.destination || null })
+    Promise.all([
+      fetch('/api/config/selection').then((response) => response.json()),
+      fetch('/api/fs/roots').then((response) => response.json()).catch(() => ({ roots: [] })),
+    ])
+      .then(([selection, rootsData]) => {
+        if (cancelled) return
+        setSelections({ source: selection?.source || null, destination: selection?.destination || null })
+        setStorageRoots(rootsData?.roots || [])
       })
       .catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  const friendlySelectionPath = useMemo(() => {
+    if (!selectionPath) return ''
+    const root = storageRoots.find((candidate) => selectionPath === candidate.path || selectionPath.startsWith(`${candidate.path}/`))
+    if (!root) return selectionPath
+    const relative = selectionPath.slice(root.path.length).replace(/^\/+/, '')
+    return [root.name, ...relative.split('/').filter(Boolean)].join(' › ')
+  }, [selectionPath, storageRoots])
 
   const runBackup = () => {
     setRunning(true)
@@ -153,14 +166,14 @@ export default function App() {
           <div className="data-node node-b" />
 
           <div key={`core-${lens}-${selectionPath || 'empty'}`} className="dial-core">
-            <span className="core-mark">J</span>
+            <img className="core-emblem" src="/jayn-emblem.png" alt="" />
             <small>{lens.toUpperCase()} LENS</small>
             <strong>{active.value}<sup>{active.suffix}</sup></strong>
             <em>{selectionPath && filesystemLens ? 'CONFIGURED' : active.kicker}</em>
             <span className="core-foot">LIVE TELEMETRY · {selectionPath && filesystemLens ? 'PATH SAVED' : active.telemetry}</span>
             <div className="core-rule" />
             <h3>{selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
-            <p>{selectionPath || active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
+            <p title={selectionPath || undefined}>{selectionPath ? friendlySelectionPath : active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
             <div className="core-actions">
               <strong>{active.metric}</strong>
               <small>{selectionPath && filesystemLens ? 'READY' : active.time}</small>
@@ -200,7 +213,7 @@ export default function App() {
             <div className="selection-summary-icon"><LensIcon name={lens} /></div>
             <div className="selection-summary-copy">
               <span>{lens === 'Sources' ? 'SOURCE FOLDER' : 'DESTINATION FOLDER'}</span>
-              <strong title={selectionPath || ''}>{selectionPath || 'No folder selected'}</strong>
+              <strong title={selectionPath || ''}>{selectionPath ? friendlySelectionPath : 'No folder selected'}</strong>
               <small>{lens === 'Sources' ? 'The selected folder and all of its subfolders will be protected.' : 'Backup data will be written to this location.'}</small>
             </div>
             <button type="button" className="selection-summary-action" onClick={() => openPicker(currentKind)}>
