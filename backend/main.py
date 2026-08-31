@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -93,6 +94,26 @@ def _storage_roots() -> list[dict]:
     return result
 
 
+def _directory_size(directory: Path) -> tuple[int, int, int]:
+    total_bytes = 0
+    file_count = 0
+    directory_count = 0
+
+    for root, dirs, files in os.walk(directory, followlinks=False):
+        directory_count += len(dirs)
+        for filename in files:
+            path = Path(root) / filename
+            try:
+                if path.is_symlink():
+                    continue
+                total_bytes += path.stat().st_size
+                file_count += 1
+            except (PermissionError, FileNotFoundError, OSError):
+                continue
+
+    return total_bytes, file_count, directory_count
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "service": "jayn-vault-api"}
@@ -173,4 +194,52 @@ def set_selection(request: SelectionRequest) -> dict:
     return {
         "source": data.get("source"),
         "destination": data.get("destination"),
+    }
+
+
+@app.get("/api/storage/status")
+def storage_status() -> dict:
+    data = _load_config()
+    source_raw = data.get("source")
+    destination_raw = data.get("destination")
+
+    source = None
+    destination = None
+
+    if source_raw:
+        source_path = _resolve_dir(source_raw)
+        if not os.access(source_path, os.R_OK | os.X_OK):
+            raise HTTPException(status_code=403, detail="The configured source is not readable.")
+        total_bytes, file_count, directory_count = _directory_size(source_path)
+        source = {
+            "path": str(source_path),
+            "bytes": total_bytes,
+            "files": file_count,
+            "directories": directory_count,
+        }
+
+    if destination_raw:
+        destination_path = _resolve_dir(destination_raw)
+        if not os.access(destination_path, os.W_OK | os.X_OK):
+            raise HTTPException(status_code=403, detail="The configured destination is not writable.")
+        usage = shutil.disk_usage(destination_path)
+        destination = {
+            "path": str(destination_path),
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+        }
+
+    capacity_ok = None
+    shortfall_bytes = 0
+    if source is not None and destination is not None:
+        capacity_ok = destination["free_bytes"] >= source["bytes"]
+        if not capacity_ok:
+            shortfall_bytes = source["bytes"] - destination["free_bytes"]
+
+    return {
+        "source": source,
+        "destination": destination,
+        "capacity_ok": capacity_ok,
+        "shortfall_bytes": shortfall_bytes,
     }
