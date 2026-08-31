@@ -12,6 +12,66 @@
   margin-bottom: -68px;
 }
 
+/*
+ * Coordinate the radial accents as one instrument. The recovered stylesheet
+ * had independent full-circle reveal animations (1.25s / 1.05s) fighting the
+ * .85s lens-position transition. Keep the readout entrance animation, but make
+ * every orange ring accent share the selected lens angle, duration and easing.
+ */
+.dial-wrap {
+  --lens-angle: 0deg;
+  --dial-motion: 850ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.dial-wrap.mode-weekly { --lens-angle: 90deg; }
+.dial-wrap.mode-sources { --lens-angle: 180deg; }
+.dial-wrap.mode-destinations { --lens-angle: 270deg; }
+
+.dial-outer::after,
+.dial-burst,
+.telemetry-streak {
+  animation: none !important;
+  transition: transform var(--dial-motion), opacity 320ms ease;
+  will-change: transform;
+}
+
+.dial-outer::after {
+  transform: rotate(var(--lens-angle)) !important;
+}
+
+.dial-burst {
+  opacity: .72;
+  transform: rotate(calc(var(--lens-angle) - 8deg));
+}
+
+.telemetry-streak {
+  opacity: .34;
+  transform: rotate(calc(var(--lens-angle) + 11deg));
+}
+
+/* The continuous middle reference ring is intentionally very subdued. */
+.dial-middle {
+  animation-duration: 48s !important;
+  opacity: .66;
+}
+
+/* Keep the scanning beam ambient rather than competing with lens changes. */
+.scan-beam {
+  animation-duration: 9s !important;
+  opacity: .34;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dial-outer::after,
+  .dial-burst,
+  .telemetry-streak,
+  .dial-middle,
+  .scan-beam {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
 @media (max-width: 900px) {
   .control-surface {
     transform: translateY(-36px);
