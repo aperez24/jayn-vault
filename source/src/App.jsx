@@ -37,7 +37,28 @@ function ActionIcon({ running = false }) {
   return <svg className={running ? 'action-icon is-running' : 'action-icon'} viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path className="action-arc" d="M12 3.5a8.5 8.5 0 0 1 7.2 4" /><path className="action-play" d="m10 8.7 5 3.3-5 3.3z" /></svg>
 }
 
-function ChevronIcon() { return <svg className="chevron-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 9h9M9 5l4 4-4 4" /></svg> }
+function ChevronIcon() {
+  return <svg className="chevron-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 9h9M9 5l4 4-4 4" /></svg>
+}
+
+function DialScaffold({ lens, value, suffix, kicker, telemetry, title, detail, metric, meta, actionLabel, actionClass = '', onAction }) {
+  return (
+    <div className="dial-core dial-scaffold">
+      <small className="dial-slot-label">{lens.toUpperCase()} LENS</small>
+      <strong className="dial-slot-value">{value}<sup>{suffix}</sup></strong>
+      <em className="dial-slot-kicker">{kicker}</em>
+      <span className="core-foot dial-slot-telemetry">LIVE TELEMETRY · {telemetry}</span>
+      <div className="core-rule dial-slot-rule" />
+      <h3 className="dial-slot-title">{title}</h3>
+      <p className="dial-slot-detail">{detail}</p>
+      <div className="core-actions dial-slot-actions">
+        <strong>{metric}</strong>
+        <small>{meta}</small>
+        <button className={actionClass} onClick={onAction}>{actionLabel}<ChevronIcon /></button>
+      </div>
+    </div>
+  )
+}
 
 export default function App() {
   const [lens, setLens] = useState('Daily')
@@ -101,23 +122,51 @@ export default function App() {
   const destinationTotal = formatBytesParts(storageStatus.destination?.total_bytes)
   const destinationFree = formatBytes(storageStatus.destination?.free_bytes)
 
-  let dialValue = active.value, dialSuffix = active.suffix, dialMetric = active.metric
-  let dialTime = selectionPath && filesystemLens ? 'READY' : active.time
-  let dialKicker = selectionPath && filesystemLens ? 'CONFIGURED' : active.kicker
-  let dialTelemetry = selectionPath && filesystemLens ? 'PATH SAVED' : active.telemetry
+  const dialModel = useMemo(() => {
+    const model = {
+      value: active.value,
+      suffix: active.suffix,
+      kicker: active.kicker,
+      telemetry: active.telemetry,
+      title: active.title,
+      detail: `${active.detail} → ${active.route}`,
+      metric: active.metric,
+      meta: active.time,
+      actionLabel: saved ? 'SAVED' : 'SELECT / CONFIGURE',
+      actionClass: '',
+      onAction: () => setSaved(true),
+    }
 
-  if (lens === 'Sources' && storageStatus.source) {
-    dialValue = sourceSize.value; dialSuffix = sourceSize.unit
-    dialMetric = `${storageStatus.source.files.toLocaleString()} FILES`
-    dialTime = `${storageStatus.source.directories.toLocaleString()} FOLDERS`
-    dialKicker = 'SOURCE SIZE'; dialTelemetry = 'LIVE STORAGE INDEX'
-  }
-  if (lens === 'Destinations' && storageStatus.destination) {
-    dialValue = destinationTotal.value; dialSuffix = destinationTotal.unit
-    dialMetric = capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationFree} FREE`
-    dialTime = capacityWarning ? 'CAPACITY ALERT' : 'CAPACITY READY'
-    dialKicker = 'TOTAL CAPACITY'; dialTelemetry = capacityWarning ? 'INSUFFICIENT FREE SPACE' : 'FREE SPACE VERIFIED'
-  }
+    if (lens === 'Sources') {
+      model.value = storageStatus.source ? sourceSize.value : active.value
+      model.suffix = storageStatus.source ? sourceSize.unit : active.suffix
+      model.kicker = storageStatus.source ? 'SOURCE SIZE' : active.kicker
+      model.telemetry = storageStatus.source ? 'LIVE STORAGE INDEX' : active.telemetry
+      model.title = selectionPath ? 'Source configured.' : active.title
+      model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
+      model.metric = storageStatus.source ? `${storageStatus.source.files.toLocaleString()} FILES` : active.metric
+      model.meta = storageStatus.source ? `${storageStatus.source.directories.toLocaleString()} FOLDERS` : active.time
+      model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
+      model.actionClass = selectionPath ? 'folder-name-button' : ''
+      model.onAction = () => setPickerKind('source')
+    }
+
+    if (lens === 'Destinations') {
+      model.value = storageStatus.destination ? destinationTotal.value : active.value
+      model.suffix = storageStatus.destination ? destinationTotal.unit : active.suffix
+      model.kicker = storageStatus.destination ? 'TOTAL CAPACITY' : active.kicker
+      model.telemetry = storageStatus.destination ? (capacityWarning ? 'INSUFFICIENT FREE SPACE' : 'FREE SPACE VERIFIED') : active.telemetry
+      model.title = capacityWarning ? 'Destination capacity low.' : selectionPath ? 'Destination configured.' : active.title
+      model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
+      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationFree} FREE`) : active.metric
+      model.meta = storageStatus.destination ? (capacityWarning ? 'CAPACITY ALERT' : 'CAPACITY READY') : active.time
+      model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
+      model.actionClass = selectionPath ? 'folder-name-button' : ''
+      model.onAction = () => setPickerKind('destination')
+    }
+
+    return model
+  }, [active, lens, storageStatus, sourceSize.value, sourceSize.unit, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, saved])
 
   const runBackup = async () => {
     const fresh = await refreshStorageStatus()
@@ -127,7 +176,6 @@ export default function App() {
   }
 
   const selectLens = (name) => { setLens(name); setSaved(false) }
-  const openPicker = (kind) => setPickerKind(kind)
   const saveSelection = (kind, path) => {
     setSelections((current) => ({ ...current, [kind]: path }))
     setSaved(true)
@@ -152,12 +200,7 @@ export default function App() {
 
       <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
         <div className="dial dial-outer" /><div className="dial dial-middle" /><div className="dial-cross cross-a" /><div className="dial-cross cross-b" /><div className="scan-beam" /><div className="dial-burst" /><div className="telemetry-streak" /><div className="data-node node-a" /><div className="data-node node-b" />
-        <div key={`core-${lens}-${selectionPath || 'empty'}-${dialValue}`} className="dial-core dial-core-spread">
-          <small>{lens.toUpperCase()} LENS</small><strong>{dialValue}<sup>{dialSuffix}</sup></strong><em>{dialKicker}</em><span className="core-foot">LIVE TELEMETRY · {dialTelemetry}</span><div className="core-rule" />
-          <h3>{capacityWarning && lens === 'Destinations' ? 'Destination capacity low.' : selectionPath && filesystemLens ? `${lens === 'Sources' ? 'Source' : 'Destination'} configured.` : active.title}</h3>
-          <p title={selectionPath || undefined}>{selectionPath ? friendlySelectionPath : active.detail} {!selectionPath && <><span>→</span> {active.route}</>}</p>
-          <div className="core-actions"><strong>{dialMetric}</strong><small>{dialTime}</small>{filesystemLens ? <button className={selectionPath ? 'folder-name-button' : ''} onClick={() => openPicker(currentKind)}>{selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'}<ChevronIcon /></button> : <button onClick={() => setSaved(true)}>{saved ? 'SAVED' : 'SELECT / CONFIGURE'}<ChevronIcon /></button>}</div>
-        </div>
+        <DialScaffold key={`dial-${lens}-${selectionPath || 'empty'}-${dialModel.value}`} lens={lens} {...dialModel} />
       </div>
     </section>
 
@@ -168,7 +211,7 @@ export default function App() {
       {filesystemLens && <div className={`selection-summary${capacityWarning && lens === 'Destinations' ? ' warning' : ''}`}>
         <div className="selection-summary-icon"><LensIcon name={lens} /></div>
         <div className="selection-summary-copy"><span>{lens === 'Sources' ? 'SOURCE FOLDER' : 'DESTINATION FOLDER'}</span><strong title={selectionPath || ''}>{selectionPath ? friendlySelectionPath : 'No folder selected'}</strong><small>{lens === 'Sources' && storageStatus.source ? `${formatBytes(storageStatus.source.bytes)} · ${storageStatus.source.files.toLocaleString()} files` : lens === 'Destinations' && storageStatus.destination ? `${destinationFree} free of ${formatBytes(storageStatus.destination.total_bytes)}` : lens === 'Sources' ? 'The selected folder and all of its subfolders will be protected.' : 'Backup data will be written to this location.'}</small></div>
-        <button type="button" className="selection-summary-action" onClick={() => openPicker(currentKind)}>{selectionPath ? 'Change folder' : 'Choose folder'}<ChevronIcon /></button>
+        <button type="button" className="selection-summary-action" onClick={() => setPickerKind(currentKind)}>{selectionPath ? 'Change folder' : 'Choose folder'}<ChevronIcon /></button>
       </div>}
     </section>
 
