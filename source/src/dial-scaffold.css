@@ -1,14 +1,16 @@
-/* One shared radial dial scaffold for Daily, Weekly, Sources and Destinations. */
+/* One shared radial dial scaffold for Daily, Weekly, Sources and Destinations.
+ * IMPORTANT: this component must never redefine the recovered .dial-core
+ * width/height/aspect geometry. It only lays out content inside that core.
+ */
 .dial-scaffold {
   box-sizing: border-box;
-  height: 100%;
-  padding: 20px 24px 18px !important;
+  padding: 14px 20px 12px !important;
   display: grid !important;
-  grid-template-rows: 18px 48px 18px 20px 18px 28px 20px 54px;
+  grid-template-rows: 16px 42px 16px 18px 14px 25px 18px 48px;
   align-content: center;
   justify-items: center;
   text-align: center;
-  row-gap: 3px;
+  row-gap: 2px;
 }
 
 .dial-scaffold > * {
@@ -40,9 +42,7 @@
   line-height: 1.25;
 }
 
-.dial-slot-rule {
-  align-self: center;
-}
+.dial-slot-rule { align-self: center; }
 
 .dial-slot-title {
   align-self: end;
@@ -63,7 +63,7 @@
 .dial-slot-actions {
   align-self: stretch;
   width: min(220px, 100%);
-  min-height: 54px;
+  min-height: 48px;
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.2fr);
   align-items: center;
@@ -77,21 +77,13 @@
   min-width: 0;
 }
 
-.dial-slot-actions > strong {
-  justify-self: end;
-  white-space: nowrap;
-}
-
+.dial-slot-actions > strong { justify-self: end; white-space: nowrap; }
 .dial-slot-actions > small {
   justify-self: center;
   white-space: nowrap;
   font-size: 7.5px !important;
 }
-
-.dial-slot-actions > button {
-  justify-self: start;
-  max-width: 100%;
-}
+.dial-slot-actions > button { justify-self: start; max-width: 100%; }
 
 .dial-slot-actions .folder-name-button {
   font-size: 14px !important;
@@ -104,7 +96,7 @@
 
 @media (max-width: 900px) {
   .dial-scaffold {
-    padding-left: 18px !important;
-    padding-right: 18px !important;
+    padding-left: 16px !important;
+    padding-right: 16px !important;
   }
 }
