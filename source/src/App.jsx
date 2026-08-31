@@ -149,12 +149,12 @@ export default function App() {
           <div className="dial-cross cross-a" />
           <div className="dial-cross cross-b" />
           <div className="scan-beam" />
-          <div className="dial-burst">{lens}</div>
-          <div className="telemetry-streak">{`streak-${lens}`}</div>
+          <div key={`burst-${lens}`} className="dial-burst" />
+          <div key={`streak-${lens}`} className="telemetry-streak" />
           <div className="data-node node-a" />
           <div className="data-node node-b" />
 
-          <div className="dial-core">
+          <div key={`core-${lens}`} className="dial-core">
             <span className="core-mark">J</span>
             <small>{lens.toUpperCase()} LENS</small>
             <strong>{active.value}<sup>{active.suffix}</sup></strong>
