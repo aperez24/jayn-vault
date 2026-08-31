@@ -29,6 +29,55 @@
 .dial-middle { animation-duration: 48s !important; opacity: .66; }
 .scan-beam { animation-duration: 9s !important; opacity: .34; }
 
+/* Use the real JAYN emblem in the center dial instead of the temporary J tile. */
+.core-emblem {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 6px;
+}
+
+/* Establish a legible minimum type scale inside the radial instrument. */
+.dial-core > small {
+  font-size: 8px !important;
+  line-height: 1.25;
+  letter-spacing: .16em;
+}
+
+.dial-core > em {
+  font-size: 8px !important;
+  line-height: 1.25;
+  letter-spacing: .12em;
+}
+
+.core-foot {
+  font-size: 7.5px !important;
+  line-height: 1.35;
+  letter-spacing: .12em;
+}
+
+.dial-core > h3 {
+  font-size: 12px !important;
+  line-height: 1.25;
+}
+
+.dial-core > p {
+  font-size: 8.5px !important;
+  line-height: 1.35;
+  max-width: 190px;
+  margin-left: auto;
+  margin-right: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.core-actions > small {
+  font-size: 7.5px !important;
+  letter-spacing: .14em;
+}
+
 /* Compact source / destination summary that stays in the control surface. */
 .selection-summary {
   border-bottom: 1px solid var(--line);
@@ -53,7 +102,7 @@
 
 .selection-summary-icon .lens-icon { margin: 0; width: 17px; height: 17px; }
 .selection-summary-copy { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.selection-summary-copy > span { color: #6f7a72; letter-spacing: .18em; font-size: 6px; }
+.selection-summary-copy > span { color: #6f7a72; letter-spacing: .18em; font-size: 8px; }
 .selection-summary-copy strong {
   color: #d6ddd7;
   font-size: 11px;
@@ -114,7 +163,7 @@
   padding: 26px 28px 22px;
   border-bottom: 1px solid var(--line);
 }
-.picker-kicker { color: var(--orange); letter-spacing: .22em; font-size: 7px; }
+.picker-kicker { color: var(--orange); letter-spacing: .22em; font-size: 8px; }
 .picker-header h2 { margin: 8px 0 5px; font-size: 27px; font-weight: 300; letter-spacing: -.045em; }
 .picker-header p { color: #7f8a82; max-width: 520px; margin: 0; font-size: 10px; line-height: 1.5; }
 .picker-close {
@@ -148,7 +197,7 @@
   background: transparent;
   color: #7f8a82;
   cursor: pointer;
-  font: 8px inherit;
+  font: 9px inherit;
   padding: 3px 0;
 }
 .picker-breadcrumbs button:hover { color: var(--orange); }
@@ -164,7 +213,7 @@
   border-bottom: 1px solid #eaefe817;
 }
 .picker-location-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.picker-location-copy span { color: #5f6b63; letter-spacing: .16em; font-size: 6px; }
+.picker-location-copy span { color: #5f6b63; letter-spacing: .16em; font-size: 8px; }
 .picker-location-copy strong {
   color: #bbc4bd;
   font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -217,7 +266,7 @@
 .picker-folder-icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.25px; stroke-linecap: round; stroke-linejoin: round; }
 .picker-row-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .picker-row-copy strong { font-size: 10px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.picker-row-copy small { color: #68736c; font-size: 7px; }
+.picker-row-copy small { color: #68736c; font-size: 8px; }
 .picker-row-arrow { color: var(--orange); font-size: 19px; font-weight: 200; }
 .picker-state {
   min-height: 190px;
@@ -245,10 +294,10 @@
   background: #080a09e8;
 }
 .picker-saved { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.picker-saved span { color: #59645d; letter-spacing: .14em; font-size: 6px; }
+.picker-saved span { color: #59645d; letter-spacing: .14em; font-size: 8px; }
 .picker-saved strong {
   color: #7d8981;
-  font: 7px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-weight: 400;
   max-width: 360px;
   white-space: nowrap;
