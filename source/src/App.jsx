@@ -63,6 +63,16 @@ function formatRunDate(iso, timezone, options) {
   }
 }
 
+function formatLastRun(job, timezone) {
+  if (!job) return ''
+  const when = formatRunDate(job.finished_at || job.started_at, timezone, {
+    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+  })
+  if (job.status === 'failed') return `Failed ${when} · ${job.error || 'Unknown error'}`
+  if (job.status === 'completed') return `Last successful · ${when} · ${Number(job.total_files || 0).toLocaleString()} files`
+  return ''
+}
+
 function LensIcon({ name }) {
   return <svg className="lens-icon" viewBox="0 0 24 24" aria-hidden="true">
     {name === 'Daily' && <><rect x="4" y="5" width="16" height="15" rx="2" /><path d="M8 3v4M16 3v4M4 10h16M8 14h2M14 14h2M8 17h2" /></>}
@@ -89,7 +99,7 @@ function DialScaffold({ lens, value, suffix, kicker, telemetry, title, detail, m
       <span className="core-foot dial-slot-telemetry">LIVE TELEMETRY · {telemetry}</span>
       <div className="core-rule dial-slot-rule" />
       <h3 className="dial-slot-title">{title}</h3>
-      <p className="dial-slot-detail">{detail}</p>
+      <p className="dial-slot-detail" title={detail}>{detail}</p>
       <div className="core-actions dial-slot-actions">
         <div className="dial-slot-metrics"><strong>{metric}</strong><small>{meta}</small></div>
         <button className={actionClass} onClick={onAction}>{actionLabel}<ChevronIcon /></button>
@@ -108,6 +118,7 @@ export default function App() {
   const [storageStatus, setStorageStatus] = useState(() => loadCachedStorageStatus())
   const [schedule, setSchedule] = useState(null)
   const [job, setJob] = useState({ status: 'idle', phase: 'idle', percent: 0 })
+  const [jobHistory, setJobHistory] = useState([])
   const [jobError, setJobError] = useState('')
 
   const active = lenses[lens]
@@ -142,23 +153,43 @@ export default function App() {
     return null
   }
 
+  async function refreshHistory() {
+    try {
+      const response = await fetch('/api/jobs/history?limit=50')
+      const data = await response.json()
+      if (response.ok) {
+        setJobHistory(data.items || [])
+        return data.items || []
+      }
+    } catch {}
+    return []
+  }
+
+  async function refreshSchedule() {
+    try {
+      const response = await fetch('/api/config/schedule')
+      const data = await response.json()
+      if (response.ok) {
+        setSchedule(data)
+        return data
+      }
+    } catch {}
+    return null
+  }
+
   useEffect(() => {
     let cancelled = false
 
-    fetch('/api/config/schedule')
-      .then((response) => response.json())
-      .then((scheduleData) => {
-        if (!cancelled && scheduleData) setSchedule(scheduleData)
-      })
-      .catch(() => {})
-
     Promise.all([
+      fetch('/api/config/schedule').then((response) => response.json()).catch(() => null),
       fetch('/api/config/selection').then((response) => response.json()),
       fetch('/api/fs/roots').then((response) => response.json()).catch(() => ({ roots: [] })),
       fetch('/api/storage/status').then((response) => response.json()).catch(() => null),
       fetch('/api/jobs/current').then((response) => response.json()).catch(() => null),
-    ]).then(([selection, rootsData, status, jobData]) => {
+      fetch('/api/jobs/history?limit=50').then((response) => response.json()).catch(() => ({ items: [] })),
+    ]).then(([scheduleData, selection, rootsData, status, jobData, historyData]) => {
       if (cancelled) return
+      if (scheduleData) setSchedule(scheduleData)
       setSelections({ source: selection?.source || null, destination: selection?.destination || null })
       setStorageRoots(rootsData?.roots || [])
       if (status) {
@@ -166,18 +197,27 @@ export default function App() {
         cacheStorageStatus(status)
       }
       if (jobData) setJob(jobData)
+      setJobHistory(historyData?.items || [])
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
-    if (!running) return undefined
+    let cancelled = false
+    const interval = running ? 750 : 2500
     const timer = window.setInterval(async () => {
+      const wasRunning = job?.status === 'running'
       const next = await refreshJob()
-      if (next && next.status !== 'running') await refreshStorageStatus()
-    }, 750)
-    return () => window.clearInterval(timer)
-  }, [running])
+      if (cancelled || !next) return
+      if ((wasRunning && next.status !== 'running') || (!wasRunning && next.status !== job?.status)) {
+        await Promise.all([refreshHistory(), refreshStorageStatus(), refreshSchedule()])
+      }
+    }, interval)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [running, job?.status, job?.id])
 
   const friendlySelectionPath = useMemo(() => {
     if (!selectionPath) return ''
@@ -198,6 +238,8 @@ export default function App() {
   const destinationFree = formatBytes(storageStatus.destination?.free_bytes)
   const sourceSizeText = formatBytes(storageStatus.source?.bytes)
   const timezone = schedule?.timezone || 'America/New_York'
+  const lastDaily = useMemo(() => jobHistory.find((item) => item?.trigger === 'daily') || null, [jobHistory])
+  const lastWeekly = useMemo(() => jobHistory.find((item) => item?.trigger === 'weekly') || null, [jobHistory])
 
   const dialModel = useMemo(() => {
     const model = {
@@ -212,9 +254,11 @@ export default function App() {
       model.value = config?.enabled === false ? 'OFF' : clock.value
       model.suffix = config?.enabled === false ? '' : clock.suffix
       model.kicker = config?.enabled === false ? 'SCHEDULE PAUSED' : 'NEXT BACKUP'
-      model.telemetry = config?.enabled === false ? 'AUTOMATION PAUSED' : 'SCHEDULE READY'
-      model.title = config?.enabled === false ? 'Daily backup paused.' : 'Daily backup scheduled.'
-      model.detail = config?.enabled === false ? 'Automatic daily protection is paused.' : formatRunDate(config?.next_run, timezone, { weekday: 'long', month: 'short', day: 'numeric' })
+      model.telemetry = config?.enabled === false ? 'AUTOMATION PAUSED' : lastDaily?.status === 'failed' ? 'LAST RUN FAILED' : lastDaily?.status === 'completed' ? 'LAST RUN SUCCESSFUL' : 'SCHEDULE READY'
+      model.title = config?.enabled === false ? 'Daily backup paused.' : lastDaily?.status === 'failed' ? 'Last daily backup failed.' : 'Daily backup scheduled.'
+      model.detail = config?.enabled === false
+        ? 'Automatic daily protection is paused.'
+        : lastDaily ? formatLastRun(lastDaily, timezone) : `Next · ${formatRunDate(config?.next_run, timezone, { weekday: 'long', month: 'short', day: 'numeric' })}`
       model.metric = storageStatus.source ? `${sourceSizeText} SOURCE` : 'SOURCE —'
       model.meta = storageStatus.destination ? `${destinationFree} FREE` : 'DESTINATION —'
       model.actionLabel = 'EDIT SCHEDULE'
@@ -227,23 +271,27 @@ export default function App() {
       model.value = config?.enabled === false ? 'OFF' : formatRunDate(nextDate, timezone, { month: 'short', day: '2-digit' }).toUpperCase()
       model.suffix = ''
       model.kicker = config?.enabled === false ? 'SCHEDULE PAUSED' : `${(config?.day || 'sunday').slice(0, 3).toUpperCase()} · ${timeParts(config?.time || '02:00').value} ${timeParts(config?.time || '02:00').suffix}`
-      model.telemetry = config?.enabled === false ? 'AUTOMATION PAUSED' : 'WEEKLY WINDOW READY'
-      model.title = config?.enabled === false ? 'Weekly backup paused.' : 'Weekly backup scheduled.'
-      model.detail = config?.enabled === false ? 'Automatic weekly protection is paused.' : formatRunDate(nextDate, timezone, { weekday: 'long', month: 'long', day: 'numeric' })
+      model.telemetry = config?.enabled === false ? 'AUTOMATION PAUSED' : lastWeekly?.status === 'failed' ? 'LAST RUN FAILED' : lastWeekly?.status === 'completed' ? 'LAST RUN SUCCESSFUL' : 'WEEKLY WINDOW READY'
+      model.title = config?.enabled === false ? 'Weekly backup paused.' : lastWeekly?.status === 'failed' ? 'Last weekly backup failed.' : 'Weekly backup scheduled.'
+      model.detail = config?.enabled === false
+        ? 'Automatic weekly protection is paused.'
+        : lastWeekly ? formatLastRun(lastWeekly, timezone) : `Next · ${formatRunDate(nextDate, timezone, { weekday: 'long', month: 'long', day: 'numeric' })}`
       model.metric = storageStatus.source ? `${sourceSizeText} SOURCE` : 'SOURCE —'
       model.meta = storageStatus.destination ? `${destinationFree} FREE` : 'DESTINATION —'
       model.actionLabel = 'EDIT SCHEDULE'
       model.onAction = () => setScheduleEditorMode('weekly')
     }
 
-    if ((lens === 'Daily' || lens === 'Weekly') && running) {
+    const scheduledTrigger = lens.toLowerCase()
+    const liveForLens = running && (job?.trigger === scheduledTrigger || job?.trigger === 'manual')
+    if ((lens === 'Daily' || lens === 'Weekly') && liveForLens) {
       const percent = Math.max(0, Math.min(100, Number(job?.percent || 0)))
       const scanning = job?.phase === 'starting' || job?.phase === 'scanning'
       model.value = scanning ? '…' : String(Math.round(percent))
       model.suffix = scanning ? '' : '%'
       model.kicker = scanning ? 'SCANNING SOURCE' : 'BACKUP IN PROGRESS'
       model.telemetry = scanning ? 'INDEXING FILES' : `${formatBytes(job?.processed_bytes || 0)} OF ${formatBytes(job?.total_bytes || 0)}`
-      model.title = scanning ? 'Preparing backup.' : 'Moving protected files.'
+      model.title = scanning ? `Preparing ${job?.trigger || 'backup'} run.` : `${(job?.trigger || 'backup').toUpperCase()} backup active.`
       model.detail = job?.current_file || 'Preparing source and destination…'
       model.metric = `${Number(job?.processed_files || 0).toLocaleString()} / ${Number(job?.total_files || 0).toLocaleString()} FILES`
       model.meta = `${Number(job?.copied_files || 0).toLocaleString()} COPIED`
@@ -280,7 +328,7 @@ export default function App() {
     }
 
     return model
-  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, running, job])
+  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, running, job, lastDaily, lastWeekly])
 
   const runBackup = async () => {
     if (running) return
