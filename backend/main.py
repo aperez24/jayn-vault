@@ -410,7 +410,10 @@ def _hardlink_capability(repository: Path) -> bool:
     try:
         source.write_bytes(b"JAYN")
         os.link(source, linked)
-        return linked.exists() and source.stat().st_ino == linked.stat().st_ino
+        # CIFS mounts using noserverino can present different client-side inode
+        # numbers for two names that still represent a valid server-side hard link.
+        # A successful link() operation is therefore the authoritative capability test.
+        return linked.exists()
     except OSError:
         return False
     finally:
@@ -575,8 +578,6 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
                         )
                         continue
                     except OSError:
-                        # Capability was confirmed, but a per-file hard link can still fail.
-                        # Fall back to a physical copy after re-checking free space.
                         if shutil.disk_usage(repository).free < file_size:
                             raise RuntimeError(f"Not enough free space to fall back to copying {relative}.")
 
@@ -857,8 +858,6 @@ def run_backup_now() -> dict:
     if not os.access(repository, os.W_OK | os.X_OK):
         raise HTTPException(status_code=403, detail="The configured destination is not writable.")
 
-    # Worker performs the authoritative scan, hard-link capability test, and
-    # capacity preflight immediately before creating the snapshot.
     job_id = uuid.uuid4().hex[:12]
     _set_job(
         id=job_id,
