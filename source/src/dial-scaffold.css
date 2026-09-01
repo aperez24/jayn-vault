@@ -95,7 +95,7 @@
   justify-self: center;
   align-self: center;
   position: relative;
-  top: 7px !important;
+  top: 11px !important;
   max-width: 200px;
   text-align: center;
 }
@@ -116,6 +116,6 @@
   }
 
   .dial-slot-actions > button {
-    top: 5px !important;
+    top: 8px !important;
   }
 }
