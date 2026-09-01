@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import FilesystemBrowser from './FilesystemBrowser.jsx'
+import ScheduleEditor from './ScheduleEditor.jsx'
 
 const lenses = {
-  Daily: { title: 'Daily passage ready.', detail: 'Office File Server', route: 'OneDrive', time: 'Tomorrow · 06:00 AM', metric: '428 GB', value: '100', suffix: '%', kicker: 'NEXT PASSAGE', telemetry: '428 GB QUEUED' },
-  Weekly: { title: 'Weekly archive scheduled.', detail: 'Accounting Archive', route: 'Synology NAS', time: 'Sunday · 02:00 AM', metric: '86 GB', value: '86', suffix: 'GB', kicker: 'ARCHIVE WINDOW', telemetry: 'SUNDAY · 02:00 AM' },
-  Sources: { title: 'Choose what moves.', detail: 'Select the folder that JAYN Vault should protect', route: 'All subfolders included', time: 'Local / mounted storage', metric: 'SRC', value: '01', suffix: '', kicker: 'SOURCE NODE', telemetry: 'READY TO SELECT' },
-  Destinations: { title: 'Choose where it lands.', detail: 'Select the folder that will receive the backup', route: 'Writable storage', time: 'Local / mounted storage', metric: 'DST', value: '02', suffix: '', kicker: 'DESTINATION ROUTE', telemetry: 'READY TO SELECT' },
+  Daily: { title: 'Daily backup scheduled.', detail: 'Automatic daily protection', route: 'Configured route', metric: '—', value: '—', suffix: '', kicker: 'NEXT BACKUP', telemetry: 'SCHEDULE READY' },
+  Weekly: { title: 'Weekly backup scheduled.', detail: 'Automatic weekly protection', route: 'Configured route', metric: '—', value: '—', suffix: '', kicker: 'NEXT WEEKLY', telemetry: 'SCHEDULE READY' },
+  Sources: { title: 'Choose what moves.', detail: 'Select the folder that JAYN Vault should protect', route: 'All subfolders included', metric: 'SRC', value: '01', suffix: '', kicker: 'SOURCE NODE', telemetry: 'READY TO SELECT' },
+  Destinations: { title: 'Choose where it lands.', detail: 'Select the folder that will receive the backup', route: 'Writable storage', metric: 'DST', value: '02', suffix: '', kicker: 'DESTINATION ROUTE', telemetry: 'READY TO SELECT' },
 }
 
 function formatBytesParts(bytes) {
@@ -22,6 +23,23 @@ function formatBytesParts(bytes) {
 function formatBytes(bytes) {
   const parts = formatBytesParts(bytes)
   return `${parts.value}${parts.unit ? ` ${parts.unit}` : ''}`
+}
+
+function timeParts(hhmm) {
+  if (!hhmm) return { value: '—', suffix: '' }
+  const [rawHour, rawMinute] = hhmm.split(':').map(Number)
+  const suffix = rawHour >= 12 ? 'PM' : 'AM'
+  const hour = rawHour % 12 || 12
+  return { value: `${hour}:${String(rawMinute).padStart(2, '0')}`, suffix }
+}
+
+function formatRunDate(iso, timezone, options) {
+  if (!iso) return 'Schedule paused'
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: timezone || 'America/New_York', ...options }).format(new Date(iso))
+  } catch {
+    return new Date(iso).toLocaleString()
+  }
 }
 
 function LensIcon({ name }) {
@@ -52,8 +70,7 @@ function DialScaffold({ lens, value, suffix, kicker, telemetry, title, detail, m
       <h3 className="dial-slot-title">{title}</h3>
       <p className="dial-slot-detail">{detail}</p>
       <div className="core-actions dial-slot-actions">
-        <strong>{metric}</strong>
-        <small>{meta}</small>
+        <div className="dial-slot-metrics"><strong>{metric}</strong><small>{meta}</small></div>
         <button className={actionClass} onClick={onAction}>{actionLabel}<ChevronIcon /></button>
       </div>
     </div>
@@ -63,11 +80,12 @@ function DialScaffold({ lens, value, suffix, kicker, telemetry, title, detail, m
 export default function App() {
   const [lens, setLens] = useState('Daily')
   const [running, setRunning] = useState(false)
-  const [saved, setSaved] = useState(false)
   const [pickerKind, setPickerKind] = useState(null)
+  const [scheduleEditorMode, setScheduleEditorMode] = useState(null)
   const [selections, setSelections] = useState({ source: null, destination: null })
   const [storageRoots, setStorageRoots] = useState([])
   const [storageStatus, setStorageStatus] = useState({ source: null, destination: null, capacity_ok: null, shortfall_bytes: 0 })
+  const [schedule, setSchedule] = useState(null)
 
   const active = lenses[lens]
   const filesystemLens = lens === 'Sources' || lens === 'Destinations'
@@ -95,11 +113,13 @@ export default function App() {
       fetch('/api/config/selection').then((response) => response.json()),
       fetch('/api/fs/roots').then((response) => response.json()).catch(() => ({ roots: [] })),
       fetch('/api/storage/status').then((response) => response.json()).catch(() => null),
-    ]).then(([selection, rootsData, status]) => {
+      fetch('/api/config/schedule').then((response) => response.json()).catch(() => null),
+    ]).then(([selection, rootsData, status, scheduleData]) => {
       if (cancelled) return
       setSelections({ source: selection?.source || null, destination: selection?.destination || null })
       setStorageRoots(rootsData?.roots || [])
       if (status) setStorageStatus(status)
+      if (scheduleData) setSchedule(scheduleData)
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])
@@ -121,6 +141,8 @@ export default function App() {
   const sourceSize = formatBytesParts(storageStatus.source?.bytes)
   const destinationTotal = formatBytesParts(storageStatus.destination?.total_bytes)
   const destinationFree = formatBytes(storageStatus.destination?.free_bytes)
+  const sourceSizeText = formatBytes(storageStatus.source?.bytes)
+  const timezone = schedule?.timezone || 'America/New_York'
 
   const dialModel = useMemo(() => {
     const model = {
@@ -131,10 +153,40 @@ export default function App() {
       title: active.title,
       detail: `${active.detail} → ${active.route}`,
       metric: active.metric,
-      meta: active.time,
-      actionLabel: saved ? 'SAVED' : 'SELECT / CONFIGURE',
+      meta: '',
+      actionLabel: 'CONFIGURE',
       actionClass: '',
-      onAction: () => setSaved(true),
+      onAction: () => {},
+    }
+
+    if (lens === 'Daily') {
+      const config = schedule?.daily
+      const clock = timeParts(config?.time || '06:00')
+      model.value = config?.enabled === false ? 'OFF' : clock.value
+      model.suffix = config?.enabled === false ? '' : clock.suffix
+      model.kicker = config?.enabled === false ? 'SCHEDULE PAUSED' : 'NEXT BACKUP'
+      model.telemetry = config?.enabled === false ? 'AUTOMATION PAUSED' : 'SCHEDULE READY'
+      model.title = config?.enabled === false ? 'Daily backup paused.' : 'Daily backup scheduled.'
+      model.detail = config?.enabled === false ? 'Automatic daily protection is paused.' : formatRunDate(config?.next_run, timezone, { weekday: 'long', month: 'short', day: 'numeric' })
+      model.metric = storageStatus.source ? `${sourceSizeText} SOURCE` : 'SOURCE —'
+      model.meta = storageStatus.destination ? `${destinationFree} FREE` : 'DESTINATION —'
+      model.actionLabel = 'EDIT SCHEDULE'
+      model.onAction = () => setScheduleEditorMode('daily')
+    }
+
+    if (lens === 'Weekly') {
+      const config = schedule?.weekly
+      const nextDate = config?.next_run
+      model.value = config?.enabled === false ? 'OFF' : formatRunDate(nextDate, timezone, { month: 'short', day: '2-digit' }).toUpperCase()
+      model.suffix = ''
+      model.kicker = config?.enabled === false ? 'SCHEDULE PAUSED' : `${(config?.day || 'sunday').slice(0, 3).toUpperCase()} · ${timeParts(config?.time || '02:00').value} ${timeParts(config?.time || '02:00').suffix}`
+      model.telemetry = config?.enabled === false ? 'AUTOMATION PAUSED' : 'WEEKLY WINDOW READY'
+      model.title = config?.enabled === false ? 'Weekly backup paused.' : 'Weekly backup scheduled.'
+      model.detail = config?.enabled === false ? 'Automatic weekly protection is paused.' : formatRunDate(nextDate, timezone, { weekday: 'long', month: 'long', day: 'numeric' })
+      model.metric = storageStatus.source ? `${sourceSizeText} SOURCE` : 'SOURCE —'
+      model.meta = storageStatus.destination ? `${destinationFree} FREE` : 'DESTINATION —'
+      model.actionLabel = 'EDIT SCHEDULE'
+      model.onAction = () => setScheduleEditorMode('weekly')
     }
 
     if (lens === 'Sources') {
@@ -145,7 +197,7 @@ export default function App() {
       model.title = selectionPath ? 'Source configured.' : active.title
       model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
       model.metric = storageStatus.source ? `${storageStatus.source.files.toLocaleString()} FILES` : active.metric
-      model.meta = storageStatus.source ? `${storageStatus.source.directories.toLocaleString()} FOLDERS` : active.time
+      model.meta = storageStatus.source ? `${storageStatus.source.directories.toLocaleString()} FOLDERS` : ''
       model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
       model.actionClass = selectionPath ? 'folder-name-button' : ''
       model.onAction = () => setPickerKind('source')
@@ -159,14 +211,14 @@ export default function App() {
       model.title = capacityWarning ? 'Destination capacity low.' : selectionPath ? 'Destination configured.' : active.title
       model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
       model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationFree} FREE`) : active.metric
-      model.meta = storageStatus.destination ? (capacityWarning ? 'CAPACITY ALERT' : 'CAPACITY READY') : active.time
+      model.meta = storageStatus.destination ? (capacityWarning ? 'CAPACITY ALERT' : 'CAPACITY READY') : ''
       model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
       model.actionClass = selectionPath ? 'folder-name-button' : ''
       model.onAction = () => setPickerKind('destination')
     }
 
     return model
-  }, [active, lens, storageStatus, sourceSize.value, sourceSize.unit, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, saved])
+  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel])
 
   const runBackup = async () => {
     const fresh = await refreshStorageStatus()
@@ -175,12 +227,14 @@ export default function App() {
     window.setTimeout(() => setRunning(false), 2200)
   }
 
-  const selectLens = (name) => { setLens(name); setSaved(false) }
+  const selectLens = (name) => setLens(name)
   const saveSelection = (kind, path) => {
     setSelections((current) => ({ ...current, [kind]: path }))
-    setSaved(true)
     window.setTimeout(refreshStorageStatus, 120)
   }
+
+  const dailyTag = timeParts(schedule?.daily?.time || '06:00')
+  const weeklyDay = (schedule?.weekly?.day || 'sunday').slice(0, 3).toUpperCase()
 
   return <main className={`vault-shell${capacityWarning ? ' capacity-warning' : ''}`}>
     <div className="ambient" /><div className="mesh" />
@@ -195,7 +249,7 @@ export default function App() {
         <h1>Everything important<br /><i>keeps moving.</i></h1>
         <p>A quiet control surface for the files that keep the office moving forward.</p>
         <button className="run" onClick={runBackup} disabled={capacityWarning} title={capacityWarning ? 'Destination does not have enough free space for the selected source.' : undefined}><ActionIcon running={running} /><span>{capacityWarning ? 'CAPACITY REQUIRED' : running ? 'BACKUP IN PROGRESS' : 'RUN BACKUP NOW'}</span><ChevronIcon /></button>
-        <small className={`last-run${capacityWarning ? ' is-warning' : ''}`}>{capacityWarning ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.` : running ? 'Synchronizing with office node…' : 'Last successful passage · Today 06:00 AM'}</small>
+        <small className={`last-run${capacityWarning ? ' is-warning' : ''}`}>{capacityWarning ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.` : running ? 'Preparing backup engine…' : 'Manual passage ready'}</small>
       </div>
 
       <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
@@ -205,7 +259,7 @@ export default function App() {
     </section>
 
     <section className="control-surface">
-      <div className="surface-tags"><span>LOCAL NODE</span><span>DAILY <b>06:00</b></span><span>WEEKLY <b>SUN</b></span></div>
+      <div className="surface-tags"><span>LOCAL NODE</span><span>DAILY <b>{dailyTag.value}</b></span><span>WEEKLY <b>{weeklyDay}</b></span></div>
       <div className="surface-head"><div><span className="eyebrow"><span>CONTROL SURFACE</span><b /></span><h2>Choose a lens.</h2></div><span className={`surface-status${capacityWarning ? ' warning' : ''}`}><i /> {capacityWarning ? 'CAPACITY ALERT' : 'API ONLINE'}</span></div>
       <div className="lens-nav">{Object.keys(lenses).map((name, index) => <button className={lens === name ? 'selected' : ''} onClick={() => selectLens(name)} key={name}><span>0{index + 1}</span><LensIcon name={name} /><label>{name}</label></button>)}</div>
       {filesystemLens && <div className={`selection-summary${capacityWarning && lens === 'Destinations' ? ' warning' : ''}`}>
@@ -216,6 +270,8 @@ export default function App() {
     </section>
 
     <footer className="footer"><span>© 2026 JAYN Construction, Inc. All Rights Reserved.</span><span>BUILT FOR GENERATIONS <b>·</b> VAULT / 01</span></footer>
+
     {pickerKind && <FilesystemBrowser kind={pickerKind} onClose={() => setPickerKind(null)} onSaved={(path) => saveSelection(pickerKind, path)} />}
+    {scheduleEditorMode && <ScheduleEditor mode={scheduleEditorMode} schedule={schedule} onClose={() => setScheduleEditorMode(null)} onSaved={setSchedule} />}
   </main>
 }
