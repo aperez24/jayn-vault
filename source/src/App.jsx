@@ -79,19 +79,21 @@ function DialScaffold({ lens, value, suffix, kicker, telemetry, title, detail, m
 
 export default function App() {
   const [lens, setLens] = useState('Daily')
-  const [running, setRunning] = useState(false)
   const [pickerKind, setPickerKind] = useState(null)
   const [scheduleEditorMode, setScheduleEditorMode] = useState(null)
   const [selections, setSelections] = useState({ source: null, destination: null })
   const [storageRoots, setStorageRoots] = useState([])
   const [storageStatus, setStorageStatus] = useState({ source: null, destination: null, capacity_ok: null, shortfall_bytes: 0 })
   const [schedule, setSchedule] = useState(null)
+  const [job, setJob] = useState({ status: 'idle', phase: 'idle', percent: 0 })
+  const [jobError, setJobError] = useState('')
 
   const active = lenses[lens]
   const filesystemLens = lens === 'Sources' || lens === 'Destinations'
   const currentKind = lens === 'Sources' ? 'source' : lens === 'Destinations' ? 'destination' : null
   const selectionPath = currentKind ? selections[currentKind] : null
   const capacityWarning = storageStatus.capacity_ok === false
+  const running = job?.status === 'running'
 
   async function refreshStorageStatus() {
     try {
@@ -107,6 +109,20 @@ export default function App() {
     return null
   }
 
+  async function refreshJob() {
+    try {
+      const response = await fetch('/api/jobs/current')
+      const data = await response.json()
+      if (response.ok) {
+        setJob(data)
+        return data
+      }
+    } catch {
+      // Keep the last known job state if polling is interrupted.
+    }
+    return null
+  }
+
   useEffect(() => {
     let cancelled = false
     Promise.all([
@@ -114,15 +130,28 @@ export default function App() {
       fetch('/api/fs/roots').then((response) => response.json()).catch(() => ({ roots: [] })),
       fetch('/api/storage/status').then((response) => response.json()).catch(() => null),
       fetch('/api/config/schedule').then((response) => response.json()).catch(() => null),
-    ]).then(([selection, rootsData, status, scheduleData]) => {
+      fetch('/api/jobs/current').then((response) => response.json()).catch(() => null),
+    ]).then(([selection, rootsData, status, scheduleData, jobData]) => {
       if (cancelled) return
       setSelections({ source: selection?.source || null, destination: selection?.destination || null })
       setStorageRoots(rootsData?.roots || [])
       if (status) setStorageStatus(status)
       if (scheduleData) setSchedule(scheduleData)
+      if (jobData) setJob(jobData)
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (!running) return undefined
+    const timer = window.setInterval(async () => {
+      const next = await refreshJob()
+      if (next && next.status !== 'running') {
+        await refreshStorageStatus()
+      }
+    }, 750)
+    return () => window.clearInterval(timer)
+  }, [running])
 
   const friendlySelectionPath = useMemo(() => {
     if (!selectionPath) return ''
@@ -189,6 +218,21 @@ export default function App() {
       model.onAction = () => setScheduleEditorMode('weekly')
     }
 
+    if ((lens === 'Daily' || lens === 'Weekly') && running) {
+      const percent = Math.max(0, Math.min(100, Number(job?.percent || 0)))
+      const scanning = job?.phase === 'starting' || job?.phase === 'scanning'
+      model.value = scanning ? '…' : String(Math.round(percent))
+      model.suffix = scanning ? '' : '%'
+      model.kicker = scanning ? 'SCANNING SOURCE' : 'BACKUP IN PROGRESS'
+      model.telemetry = scanning ? 'INDEXING FILES' : `${formatBytes(job?.processed_bytes || 0)} OF ${formatBytes(job?.total_bytes || 0)}`
+      model.title = scanning ? 'Preparing backup.' : 'Moving protected files.'
+      model.detail = job?.current_file || 'Preparing source and destination…'
+      model.metric = `${Number(job?.processed_files || 0).toLocaleString()} / ${Number(job?.total_files || 0).toLocaleString()} FILES`
+      model.meta = `${Number(job?.copied_files || 0).toLocaleString()} COPIED`
+      model.actionLabel = 'BACKUP RUNNING'
+      model.onAction = () => {}
+    }
+
     if (lens === 'Sources') {
       model.value = storageStatus.source ? sourceSize.value : active.value
       model.suffix = storageStatus.source ? sourceSize.unit : active.suffix
@@ -218,13 +262,23 @@ export default function App() {
     }
 
     return model
-  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel])
+  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, running, job])
 
   const runBackup = async () => {
+    if (running) return
+    setJobError('')
     const fresh = await refreshStorageStatus()
     if (!fresh || fresh.capacity_ok === false) return
-    setRunning(true)
-    window.setTimeout(() => setRunning(false), 2200)
+
+    try {
+      const response = await fetch('/api/jobs/run', { method: 'POST' })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Unable to start backup.')
+      setJob(data)
+      setLens('Daily')
+    } catch (error) {
+      setJobError(error.message || 'Unable to start backup.')
+    }
   }
 
   const selectLens = (name) => setLens(name)
@@ -235,6 +289,20 @@ export default function App() {
 
   const dailyTag = timeParts(schedule?.daily?.time || '06:00')
   const weeklyDay = (schedule?.weekly?.day || 'sunday').slice(0, 3).toUpperCase()
+
+  const heroStatus = capacityWarning
+    ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.`
+    : jobError
+      ? jobError
+      : running
+        ? job?.phase === 'scanning' || job?.phase === 'starting'
+          ? 'Scanning source before copy…'
+          : `${Math.round(Number(job?.percent || 0))}% · ${Number(job?.processed_files || 0).toLocaleString()} of ${Number(job?.total_files || 0).toLocaleString()} files`
+        : job?.status === 'failed'
+          ? `Last backup failed · ${job?.error || 'Unknown error'}`
+          : job?.status === 'completed'
+            ? `Last backup complete · ${Number(job?.copied_files || 0).toLocaleString()} copied · ${Number(job?.skipped_files || 0).toLocaleString()} unchanged`
+            : 'Manual passage ready'
 
   return <main className={`vault-shell${capacityWarning ? ' capacity-warning' : ''}`}>
     <div className="ambient" /><div className="mesh" />
@@ -248,8 +316,8 @@ export default function App() {
         <div className="eyebrow"><span>JAYN VAULT</span><b /><em>CONTINUITY, IN MOTION</em></div>
         <h1>Everything important<br /><i>keeps moving.</i></h1>
         <p>A quiet control surface for the files that keep the office moving forward.</p>
-        <button className="run" onClick={runBackup} disabled={capacityWarning} title={capacityWarning ? 'Destination does not have enough free space for the selected source.' : undefined}><ActionIcon running={running} /><span>{capacityWarning ? 'CAPACITY REQUIRED' : running ? 'BACKUP IN PROGRESS' : 'RUN BACKUP NOW'}</span><ChevronIcon /></button>
-        <small className={`last-run${capacityWarning ? ' is-warning' : ''}`}>{capacityWarning ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.` : running ? 'Preparing backup engine…' : 'Manual passage ready'}</small>
+        <button className="run" onClick={runBackup} disabled={capacityWarning || running} title={capacityWarning ? 'Destination does not have enough free space for the selected source.' : undefined}><ActionIcon running={running} /><span>{capacityWarning ? 'CAPACITY REQUIRED' : running ? 'BACKUP IN PROGRESS' : 'RUN BACKUP NOW'}</span><ChevronIcon /></button>
+        <small className={`last-run${capacityWarning || jobError || job?.status === 'failed' ? ' is-warning' : ''}`}>{heroStatus}</small>
       </div>
 
       <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
@@ -260,7 +328,7 @@ export default function App() {
 
     <section className="control-surface">
       <div className="surface-tags"><span>LOCAL NODE</span><span>DAILY <b>{dailyTag.value}</b></span><span>WEEKLY <b>{weeklyDay}</b></span></div>
-      <div className="surface-head"><div><span className="eyebrow"><span>CONTROL SURFACE</span><b /></span><h2>Choose a lens.</h2></div><span className={`surface-status${capacityWarning ? ' warning' : ''}`}><i /> {capacityWarning ? 'CAPACITY ALERT' : 'API ONLINE'}</span></div>
+      <div className="surface-head"><div><span className="eyebrow"><span>CONTROL SURFACE</span><b /></span><h2>Choose a lens.</h2></div><span className={`surface-status${capacityWarning || job?.status === 'failed' ? ' warning' : ''}`}><i /> {capacityWarning ? 'CAPACITY ALERT' : running ? 'BACKUP ACTIVE' : job?.status === 'failed' ? 'BACKUP ERROR' : 'API ONLINE'}</span></div>
       <div className="lens-nav">{Object.keys(lenses).map((name, index) => <button className={lens === name ? 'selected' : ''} onClick={() => selectLens(name)} key={name}><span>0{index + 1}</span><LensIcon name={name} /><label>{name}</label></button>)}</div>
       {filesystemLens && <div className={`selection-summary${capacityWarning && lens === 'Destinations' ? ' warning' : ''}`}>
         <div className="selection-summary-icon"><LensIcon name={lens} /></div>
