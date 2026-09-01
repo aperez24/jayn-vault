@@ -42,7 +42,10 @@
 
 /* Two-tier bottom zone shared by every lens:
  * row 1 = secondary metric + meta
- * row 2 = centered action / selected folder name
+ * row 2 = primary action / selected folder name
+ *
+ * The action is intentionally given extra separation so it reads as a
+ * distinct control zone rather than another telemetry line.
  */
 .dial-slot-actions {
   align-self: stretch;
@@ -91,6 +94,8 @@
   grid-row: 2;
   justify-self: center;
   align-self: center;
+  position: relative;
+  top: 7px !important;
   max-width: 200px;
   text-align: center;
 }
@@ -108,5 +113,9 @@
   .dial-scaffold {
     padding-left: 16px !important;
     padding-right: 16px !important;
+  }
+
+  .dial-slot-actions > button {
+    top: 5px !important;
   }
 }
