@@ -322,7 +322,7 @@ export default function App() {
 
       <div className={`dial-wrap mode-${lens.toLowerCase()}${capacityWarning && lens === 'Destinations' ? ' dial-warning' : ''}`}>
         <div className="dial dial-outer" /><div className="dial dial-middle" /><div className="dial-cross cross-a" /><div className="dial-cross cross-b" /><div className="scan-beam" /><div className="dial-burst" /><div className="telemetry-streak" /><div className="data-node node-a" /><div className="data-node node-b" />
-        <DialScaffold key={`dial-${lens}-${selectionPath || 'empty'}-${dialModel.value}`} lens={lens} {...dialModel} />
+        <DialScaffold key={`dial-${lens}`} lens={lens} {...dialModel} />
       </div>
     </section>
 
