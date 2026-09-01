@@ -12,8 +12,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from restore_api import router as restore_router
 
-app = FastAPI(title="JAYN Vault API", version="0.5.0")
+app = FastAPI(title="JAYN Vault API", version="0.6.0")
+app.include_router(restore_router)
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
 HISTORY_PATH = Path(os.getenv("JAYN_VAULT_HISTORY", "/var/lib/jayn-vault/history.json"))
