@@ -60,19 +60,22 @@
 .schedule-field input:focus { border-color: #f6821f77; }
 
 .schedule-toggle {
+  position: relative;
   border: 1px solid #eaefe818;
   background: #0d100e99;
-  padding: 13px 14px;
-  display: grid;
-  grid-template-columns: auto 34px minmax(0, 1fr);
+  padding: 15px 16px;
+  min-height: 70px;
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   cursor: pointer;
 }
+.schedule-toggle:hover { background: #101411aa; border-color: #eaefe82b; }
 .schedule-toggle input { position: absolute; opacity: 0; pointer-events: none; }
 .schedule-toggle-ui {
-  width: 32px;
-  height: 17px;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
   border: 1px solid #59645d;
   position: relative;
   transition: .2s ease;
@@ -80,18 +83,34 @@
 .schedule-toggle-ui::after {
   content: '';
   position: absolute;
-  width: 11px;
-  height: 11px;
-  left: 2px;
-  top: 2px;
+  width: 12px;
+  height: 12px;
+  left: 3px;
+  top: 3px;
   background: #77837a;
   transition: .2s ease;
 }
 .schedule-toggle input:checked + .schedule-toggle-ui { border-color: #f6821f88; background: #f6821f12; }
-.schedule-toggle input:checked + .schedule-toggle-ui::after { transform: translateX(15px); background: var(--orange); }
-.schedule-toggle > span:last-child { display: flex; flex-direction: column; gap: 3px; }
-.schedule-toggle b { color: #d7ddd8; font-size: 10px; font-weight: 400; }
-.schedule-toggle small { color: #6f7a72; font-size: 8px; }
+.schedule-toggle input:checked + .schedule-toggle-ui::after { transform: translateX(16px); background: var(--orange); }
+.schedule-toggle > span:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.35;
+}
+.schedule-toggle b {
+  color: #d7ddd8;
+  font-size: 11px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.schedule-toggle small {
+  color: #6f7a72;
+  font-size: 9px;
+  line-height: 1.45;
+  white-space: normal;
+}
 
 .schedule-timezone {
   display: flex;
@@ -127,4 +146,6 @@
   .schedule-overlay { padding: 12px; }
   .schedule-dialog { width: 100%; }
   .schedule-header, .schedule-body, .schedule-footer { padding-left: 18px; padding-right: 18px; }
+  .schedule-toggle { align-items: flex-start; }
+  .schedule-toggle b { white-space: normal; }
 }
