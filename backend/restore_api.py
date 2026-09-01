@@ -47,6 +47,11 @@ class RecoveryRequest(BaseModel):
     destination: str
 
 
+class RecoveryFolderRequest(BaseModel):
+    parent: str
+    name: str = Field(min_length=1, max_length=120)
+
+
 def _load_config() -> dict:
     try:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -132,6 +137,17 @@ def _safe_recovery_destination(raw: str) -> Path:
     except ValueError:
         pass
     return destination
+
+
+def _safe_new_folder_name(raw: str) -> str:
+    name = raw.strip()
+    if not name or name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Enter a valid folder name.")
+    if "/" in name or "\\" in name or "\x00" in name:
+        raise HTTPException(status_code=400, detail="Folder names cannot contain path separators.")
+    if name == REPOSITORY_META_DIR:
+        raise HTTPException(status_code=400, detail="That folder name is reserved by JAYN Vault.")
+    return name
 
 
 def _snapshots_root() -> Path:
@@ -417,6 +433,29 @@ def file_versions(path: str) -> dict:
         previous_signature = signature
 
     return {"path": relative.as_posix(), "count": len(versions), "items": versions}
+
+
+@router.post("/recovery/folder")
+def create_recovery_folder(request: RecoveryFolderRequest) -> dict:
+    parent = _safe_recovery_destination(request.parent)
+    name = _safe_new_folder_name(request.name)
+    target = parent / name
+    if target.exists():
+        raise HTTPException(status_code=409, detail="A folder with that name already exists here.")
+    try:
+        target.mkdir(parents=False, exist_ok=False)
+        resolved = target.resolve(strict=True)
+        resolved.relative_to(parent.resolve(strict=True))
+    except FileExistsError as exc:
+        raise HTTPException(status_code=409, detail="A folder with that name already exists here.") from exc
+    except (PermissionError, OSError, ValueError, RuntimeError) as exc:
+        try:
+            if target.exists() and target.is_dir() and not any(target.iterdir()):
+                target.rmdir()
+        except OSError:
+            pass
+        raise HTTPException(status_code=500, detail=f"Unable to create recovery folder: {exc}") from exc
+    return {"name": name, "path": str(resolved), "parent": str(parent)}
 
 
 @router.post("/recover")
