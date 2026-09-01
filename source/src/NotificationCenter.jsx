@@ -72,7 +72,7 @@ export default function NotificationCenter({ open, onClose, onHistoryChange }) {
     return event.severity === filter
   }), [history, filter])
 
-  async function saveSettings() {
+  async function saveSettings({ keepBusy = false } = {}) {
     setBusy(true)
     setMessage('')
     const recipients = recipientText.split(/[;,\n]/).map((item) => item.trim()).filter(Boolean)
@@ -98,7 +98,7 @@ export default function NotificationCenter({ open, onClose, onHistoryChange }) {
       setMessage(error.message)
       return false
     } finally {
-      setBusy(false)
+      if (!keepBusy) setBusy(false)
     }
   }
 
@@ -106,7 +106,7 @@ export default function NotificationCenter({ open, onClose, onHistoryChange }) {
     setBusy(true)
     setMessage('')
     try {
-      const saved = await saveSettings()
+      const saved = await saveSettings({ keepBusy: true })
       if (!saved) return
       const response = await fetch('/api/notifications/test', { method: 'POST' })
       const data = await response.json()
