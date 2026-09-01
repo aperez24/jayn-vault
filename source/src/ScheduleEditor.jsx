@@ -12,6 +12,32 @@ const DAYS = [
 
 const HOURS = Array.from({ length: 12 }, (_, index) => String(index + 1))
 const MINUTES = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0'))
+const FALLBACK_TIMEZONES = [
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Phoenix',
+  'America/Los_Angeles',
+  'America/Anchorage',
+  'Pacific/Honolulu',
+  'UTC',
+]
+
+function detectedTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'
+  } catch {
+    return 'America/New_York'
+  }
+}
+
+function availableTimezones(current, device) {
+  let zones = FALLBACK_TIMEZONES
+  try {
+    if (typeof Intl.supportedValuesOf === 'function') zones = Intl.supportedValuesOf('timeZone')
+  } catch {}
+  return Array.from(new Set([device, current, ...zones].filter(Boolean))).sort((a, b) => a.localeCompare(b))
+}
 
 function splitTime(value = '06:00') {
   const [rawHour = '06', rawMinute = '00'] = value.split(':')
@@ -34,8 +60,10 @@ function formatTime(value) {
 }
 
 export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
+  const deviceTimezone = useMemo(() => detectedTimezone(), [])
   const [time, setTime] = useState('06:00')
   const [day, setDay] = useState('sunday')
+  const [timezone, setTimezone] = useState(deviceTimezone)
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -44,10 +72,12 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
     const config = mode === 'daily' ? schedule?.daily : schedule?.weekly
     setTime(config?.time || (mode === 'daily' ? '06:00' : '02:00'))
     setDay(schedule?.weekly?.day || 'sunday')
+    setTimezone(schedule?.timezone || deviceTimezone)
     setEnabled(config?.enabled ?? true)
-  }, [mode, schedule])
+  }, [mode, schedule, deviceTimezone])
 
   const timeParts = useMemo(() => splitTime(time), [time])
+  const timezoneOptions = useMemo(() => availableTimezones(timezone, deviceTimezone), [timezone, deviceTimezone])
   const otherSchedule = mode === 'daily' ? schedule?.weekly : schedule?.daily
   const conflict = Boolean(enabled && otherSchedule?.enabled && otherSchedule?.time === time)
 
@@ -67,7 +97,7 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
     setError('')
     try {
       const next = {
-        timezone: schedule?.timezone || 'America/New_York',
+        timezone,
         daily: {
           enabled: mode === 'daily' ? enabled : (schedule?.daily?.enabled ?? true),
           time: mode === 'daily' ? time : (schedule?.daily?.time || '06:00'),
@@ -138,10 +168,13 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
             <span><b>{label} backup enabled</b><small>{enabled ? 'JAYN Vault will run this schedule automatically.' : 'This automatic schedule is paused. Turn it back on to edit the schedule.'}</small></span>
           </label>
 
-          <div className="schedule-timezone">
+          <label className="schedule-timezone">
             <span>TIME ZONE</span>
-            <strong>{schedule?.timezone || 'America/New_York'}</strong>
-          </div>
+            <select value={timezone} onChange={(event) => { setTimezone(event.target.value); setError('') }}>
+              {timezoneOptions.map((zone) => <option value={zone} key={zone}>{zone}{zone === deviceTimezone ? ' — Device' : ''}</option>)}
+            </select>
+            <small>Applies to both Daily and Weekly schedules.</small>
+          </label>
 
           {error && <div className="schedule-error">{error}</div>}
         </div>
