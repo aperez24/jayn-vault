@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import FilesystemBrowser from './FilesystemBrowser.jsx'
 import ScheduleEditor from './ScheduleEditor.jsx'
-import NotificationCenter, { NotificationBell } from './NotificationCenter.jsx'
 
 const lenses = {
   Daily: { title: 'Daily backup scheduled.', detail: 'Automatic daily protection', route: 'Configured route', metric: '—', value: '—', suffix: '', kicker: 'NEXT BACKUP', telemetry: 'SCHEDULE READY' },
@@ -88,8 +87,6 @@ export default function App() {
   const [schedule, setSchedule] = useState(null)
   const [job, setJob] = useState({ status: 'idle', phase: 'idle', percent: 0 })
   const [jobError, setJobError] = useState('')
-  const [notificationOpen, setNotificationOpen] = useState(false)
-  const [notificationAlertCount, setNotificationAlertCount] = useState(0)
 
   const active = lenses[lens]
   const filesystemLens = lens === 'Sources' || lens === 'Destinations'
@@ -126,21 +123,6 @@ export default function App() {
     return null
   }
 
-  function updateNotificationCount(items) {
-    const count = (items || []).filter((event) => event.severity === 'failure' || event.severity === 'warning' || event.delivery_status === 'failed').length
-    setNotificationAlertCount(count)
-  }
-
-  async function refreshNotificationCount() {
-    try {
-      const response = await fetch('/api/notifications/history?limit=20')
-      const data = await response.json()
-      if (response.ok) updateNotificationCount(data.items)
-    } catch {
-      // Notification history remains available from the panel after connectivity returns.
-    }
-  }
-
   useEffect(() => {
     let cancelled = false
     Promise.all([
@@ -149,15 +131,13 @@ export default function App() {
       fetch('/api/storage/status').then((response) => response.json()).catch(() => null),
       fetch('/api/config/schedule').then((response) => response.json()).catch(() => null),
       fetch('/api/jobs/current').then((response) => response.json()).catch(() => null),
-      fetch('/api/notifications/history?limit=20').then((response) => response.json()).catch(() => ({ items: [] })),
-    ]).then(([selection, rootsData, status, scheduleData, jobData, notificationData]) => {
+    ]).then(([selection, rootsData, status, scheduleData, jobData]) => {
       if (cancelled) return
       setSelections({ source: selection?.source || null, destination: selection?.destination || null })
       setStorageRoots(rootsData?.roots || [])
       if (status) setStorageStatus(status)
       if (scheduleData) setSchedule(scheduleData)
       if (jobData) setJob(jobData)
-      updateNotificationCount(notificationData?.items || [])
     }).catch(() => {})
     return () => { cancelled = true }
   }, [])
@@ -168,7 +148,6 @@ export default function App() {
       const next = await refreshJob()
       if (next && next.status !== 'running') {
         await refreshStorageStatus()
-        await refreshNotificationCount()
       }
     }, 750)
     return () => window.clearInterval(timer)
@@ -329,7 +308,7 @@ export default function App() {
     <div className="ambient" /><div className="mesh" />
     <header className="topbar">
       <button className="brand" onClick={() => selectLens('Daily')} aria-label="JAYN Vault home"><img className="brand-emblem" src="/jayn-emblem.png" alt="" /><span className="vault-word"><small>JAYN</small><b>VAULT</b></span></button>
-      <div className="top-meta"><NotificationBell count={notificationAlertCount} onClick={() => setNotificationOpen(true)} /><button className="profile">AP</button></div>
+      <div className="top-meta"><button className="profile">AP</button></div>
     </header>
 
     <section className="hero">
@@ -362,6 +341,5 @@ export default function App() {
 
     {pickerKind && <FilesystemBrowser kind={pickerKind} onClose={() => setPickerKind(null)} onSaved={(path) => saveSelection(pickerKind, path)} />}
     {scheduleEditorMode && <ScheduleEditor mode={scheduleEditorMode} schedule={schedule} onClose={() => setScheduleEditorMode(null)} onSaved={setSchedule} />}
-    <NotificationCenter open={notificationOpen} onClose={() => setNotificationOpen(false)} onHistoryChange={updateNotificationCount} />
   </main>
 }
