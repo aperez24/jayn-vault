@@ -4,6 +4,7 @@ import App from './App.jsx'
 import './layout-fixes.css'
 import './capacity.css'
 import './dial-scaffold.css'
+import './schedule-editor.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
