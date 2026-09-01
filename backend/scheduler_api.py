@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import threading
-import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -297,7 +296,7 @@ def stop_scheduler() -> None:
         thread.join(timeout=min(2.0, CHECK_INTERVAL_SECONDS))
 
 
-@router.get("/api/scheduler/status")
+@router.get("/scheduler/status")
 def scheduler_status() -> dict:
     state = _load_state()
     runtime = _runtime_snapshot()
