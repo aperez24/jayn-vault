@@ -8,7 +8,7 @@ const publicRoot = resolve(sourceRoot, 'public')
 const publicAssets = resolve(publicRoot, 'assets')
 
 await mkdir(publicAssets, { recursive: true })
-await cp(resolve(repoRoot, 'assets/index-q0Jtr7rS.css'), resolve(publicAssets, 'recovered.css'))
+await cp(resolve(repoRoot, 'assets/recovered.css'), resolve(publicAssets, 'recovered.css'))
 await cp(resolve(repoRoot, 'jayn-emblem.png'), resolve(publicRoot, 'jayn-emblem.png'))
 await cp(resolve(repoRoot, 'favicon.svg'), resolve(publicRoot, 'favicon.svg'))
 
