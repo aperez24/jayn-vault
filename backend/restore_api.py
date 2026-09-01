@@ -11,8 +11,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from scheduler_api import router as scheduler_router
 
 router = APIRouter(prefix="/api/restore", tags=["restore"])
+router.include_router(scheduler_router)
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
 DEFAULT_TIMEZONE = "America/New_York"
