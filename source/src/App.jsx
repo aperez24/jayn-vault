@@ -123,18 +123,26 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false
+
+    // Schedule configuration is intentionally loaded independently so the
+    // Daily/Weekly dial never waits on slower filesystem/storage telemetry.
+    fetch('/api/config/schedule')
+      .then((response) => response.json())
+      .then((scheduleData) => {
+        if (!cancelled && scheduleData) setSchedule(scheduleData)
+      })
+      .catch(() => {})
+
     Promise.all([
       fetch('/api/config/selection').then((response) => response.json()),
       fetch('/api/fs/roots').then((response) => response.json()).catch(() => ({ roots: [] })),
       fetch('/api/storage/status').then((response) => response.json()).catch(() => null),
-      fetch('/api/config/schedule').then((response) => response.json()).catch(() => null),
       fetch('/api/jobs/current').then((response) => response.json()).catch(() => null),
-    ]).then(([selection, rootsData, status, scheduleData, jobData]) => {
+    ]).then(([selection, rootsData, status, jobData]) => {
       if (cancelled) return
       setSelections({ source: selection?.source || null, destination: selection?.destination || null })
       setStorageRoots(rootsData?.roots || [])
       if (status) setStorageStatus(status)
-      if (scheduleData) setSchedule(scheduleData)
       if (jobData) setJob(jobData)
     }).catch(() => {})
     return () => { cancelled = true }
