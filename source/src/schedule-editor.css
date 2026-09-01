@@ -43,7 +43,7 @@
 .schedule-close:hover { color: var(--orange); border-color: #f6821f66; }
 
 .schedule-body { padding: 22px 28px; display: grid; gap: 16px; }
-.schedule-field { display: grid; gap: 7px; }
+.schedule-field { display: grid; gap: 7px; transition: opacity .2s ease; }
 .schedule-field > span,
 .schedule-timezone > span { color: #637068; letter-spacing: .18em; font-size: 8px; }
 .schedule-field select,
@@ -58,6 +58,17 @@
 }
 .schedule-field select:focus,
 .schedule-field input:focus { border-color: #f6821f77; }
+.schedule-field.is-disabled { opacity: .38; }
+.schedule-field.is-disabled > span { color: #4b554f; }
+.schedule-field select:disabled,
+.schedule-field input:disabled {
+  cursor: not-allowed;
+  color: #667068;
+  border-color: #eaefe80f;
+  background: #090b0a;
+  -webkit-text-fill-color: #667068;
+  opacity: 1;
+}
 
 .schedule-toggle {
   position: relative;
