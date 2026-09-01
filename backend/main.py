@@ -3,18 +3,34 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="JAYN Vault API", version="0.1.0")
+app = FastAPI(title="JAYN Vault API", version="0.2.0")
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
 DEFAULT_STORAGE_ROOTS = [
     {"id": "jaynos", "name": "jaynOS", "path": "/mnt/jayn-vault/sources/jaynos"},
 ]
+DEFAULT_SCHEDULE = {
+    "timezone": "America/New_York",
+    "daily": {"enabled": True, "time": "06:00"},
+    "weekly": {"enabled": True, "day": "sunday", "time": "02:00"},
+}
+WEEKDAYS = {
+    "monday": 0,
+    "tuesday": 1,
+    "wednesday": 2,
+    "thursday": 3,
+    "friday": 4,
+    "saturday": 5,
+    "sunday": 6,
+}
 
 
 class SelectionRequest(BaseModel):
@@ -27,13 +43,81 @@ class SelectionState(BaseModel):
     destination: str | None = None
 
 
+class DailySchedule(BaseModel):
+    enabled: bool = True
+    time: str = "06:00"
+
+    @field_validator("time")
+    @classmethod
+    def validate_time(cls, value: str) -> str:
+        _parse_hhmm(value)
+        return value
+
+
+class WeeklySchedule(BaseModel):
+    enabled: bool = True
+    day: Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] = "sunday"
+    time: str = "02:00"
+
+    @field_validator("time")
+    @classmethod
+    def validate_time(cls, value: str) -> str:
+        _parse_hhmm(value)
+        return value
+
+
+class ScheduleRequest(BaseModel):
+    timezone: str = "America/New_York"
+    daily: DailySchedule = Field(default_factory=DailySchedule)
+    weekly: WeeklySchedule = Field(default_factory=WeeklySchedule)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Unknown IANA timezone") from exc
+        return value
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    try:
+        parsed = datetime.strptime(value, "%H:%M")
+    except ValueError as exc:
+        raise ValueError("Time must use 24-hour HH:MM format") from exc
+    return parsed.hour, parsed.minute
+
+
+def _default_config() -> dict:
+    return {
+        "source": None,
+        "destination": None,
+        "schedule": json.loads(json.dumps(DEFAULT_SCHEDULE)),
+    }
+
+
 def _load_config() -> dict:
     try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        return {"source": None, "destination": None}
+        return _default_config()
     except (json.JSONDecodeError, OSError) as exc:
         raise HTTPException(status_code=500, detail=f"Unable to read Vault configuration: {exc}") from exc
+
+    if not isinstance(data, dict):
+        data = _default_config()
+    data.setdefault("source", None)
+    data.setdefault("destination", None)
+    data.setdefault("schedule", json.loads(json.dumps(DEFAULT_SCHEDULE)))
+    schedule = data["schedule"]
+    if not isinstance(schedule, dict):
+        schedule = json.loads(json.dumps(DEFAULT_SCHEDULE))
+        data["schedule"] = schedule
+    schedule.setdefault("timezone", DEFAULT_SCHEDULE["timezone"])
+    schedule.setdefault("daily", dict(DEFAULT_SCHEDULE["daily"]))
+    schedule.setdefault("weekly", dict(DEFAULT_SCHEDULE["weekly"]))
+    return data
 
 
 def _save_config(data: dict) -> None:
@@ -114,6 +198,53 @@ def _directory_size(directory: Path) -> tuple[int, int, int]:
     return total_bytes, file_count, directory_count
 
 
+def _next_daily(schedule: dict, timezone: ZoneInfo, now: datetime) -> datetime | None:
+    if not schedule.get("enabled", True):
+        return None
+    hour, minute = _parse_hhmm(str(schedule.get("time", "06:00")))
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def _next_weekly(schedule: dict, timezone: ZoneInfo, now: datetime) -> datetime | None:
+    if not schedule.get("enabled", True):
+        return None
+    day = str(schedule.get("day", "sunday")).lower()
+    if day not in WEEKDAYS:
+        day = "sunday"
+    hour, minute = _parse_hhmm(str(schedule.get("time", "02:00")))
+    days_ahead = (WEEKDAYS[day] - now.weekday()) % 7
+    candidate = (now + timedelta(days=days_ahead)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=7)
+    return candidate
+
+
+def _schedule_payload(data: dict) -> dict:
+    schedule = data.get("schedule") or DEFAULT_SCHEDULE
+    timezone_name = str(schedule.get("timezone") or DEFAULT_SCHEDULE["timezone"])
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone_name = DEFAULT_SCHEDULE["timezone"]
+        timezone = ZoneInfo(timezone_name)
+
+    now = datetime.now(timezone)
+    daily = {**DEFAULT_SCHEDULE["daily"], **(schedule.get("daily") or {})}
+    weekly = {**DEFAULT_SCHEDULE["weekly"], **(schedule.get("weekly") or {})}
+    next_daily = _next_daily(daily, timezone, now)
+    next_weekly = _next_weekly(weekly, timezone, now)
+
+    return {
+        "timezone": timezone_name,
+        "daily": {**daily, "next_run": next_daily.isoformat() if next_daily else None},
+        "weekly": {**weekly, "next_run": next_weekly.isoformat() if next_weekly else None},
+        "server_now": now.isoformat(),
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "service": "jayn-vault-api"}
@@ -170,10 +301,7 @@ def list_directory(path: str = Query(default="/")) -> dict:
 @app.get("/api/config/selection", response_model=SelectionState)
 def get_selection() -> dict:
     data = _load_config()
-    return {
-        "source": data.get("source"),
-        "destination": data.get("destination"),
-    }
+    return {"source": data.get("source"), "destination": data.get("destination")}
 
 
 @app.post("/api/config/selection", response_model=SelectionState)
@@ -190,11 +318,20 @@ def set_selection(request: SelectionRequest) -> dict:
     data = _load_config()
     data[request.kind] = str(directory)
     _save_config(data)
+    return {"source": data.get("source"), "destination": data.get("destination")}
 
-    return {
-        "source": data.get("source"),
-        "destination": data.get("destination"),
-    }
+
+@app.get("/api/config/schedule")
+def get_schedule() -> dict:
+    return _schedule_payload(_load_config())
+
+
+@app.post("/api/config/schedule")
+def set_schedule(request: ScheduleRequest) -> dict:
+    data = _load_config()
+    data["schedule"] = request.model_dump()
+    _save_config(data)
+    return _schedule_payload(data)
 
 
 @app.get("/api/storage/status")
@@ -211,12 +348,7 @@ def storage_status() -> dict:
         if not os.access(source_path, os.R_OK | os.X_OK):
             raise HTTPException(status_code=403, detail="The configured source is not readable.")
         total_bytes, file_count, directory_count = _directory_size(source_path)
-        source = {
-            "path": str(source_path),
-            "bytes": total_bytes,
-            "files": file_count,
-            "directories": directory_count,
-        }
+        source = {"path": str(source_path), "bytes": total_bytes, "files": file_count, "directories": directory_count}
 
     if destination_raw:
         destination_path = _resolve_dir(destination_raw)
@@ -237,9 +369,4 @@ def storage_status() -> dict:
         if not capacity_ok:
             shortfall_bytes = source["bytes"] - destination["free_bytes"]
 
-    return {
-        "source": source,
-        "destination": destination,
-        "capacity_ok": capacity_ok,
-        "shortfall_bytes": shortfall_bytes,
-    }
+    return {"source": source, "destination": destination, "capacity_ok": capacity_ok, "shortfall_bytes": shortfall_bytes}
