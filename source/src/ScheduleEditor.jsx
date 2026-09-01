@@ -25,6 +25,7 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
   }, [mode, schedule])
 
   function openTimePicker(event) {
+    if (!enabled) return
     try {
       event.currentTarget.showPicker?.()
     } catch {
@@ -81,15 +82,15 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
 
         <div className="schedule-body">
           {mode === 'weekly' && (
-            <label className="schedule-field">
+            <label className={`schedule-field${enabled ? '' : ' is-disabled'}`}>
               <span>DAY</span>
-              <select value={day} onChange={(event) => setDay(event.target.value)}>
+              <select value={day} onChange={(event) => setDay(event.target.value)} disabled={!enabled}>
                 {DAYS.map(([value, text]) => <option value={value} key={value}>{text}</option>)}
               </select>
             </label>
           )}
 
-          <label className="schedule-field">
+          <label className={`schedule-field${enabled ? '' : ' is-disabled'}`}>
             <span>TIME</span>
             <input
               className="schedule-time-input"
@@ -97,6 +98,8 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
               value={time}
               onChange={(event) => setTime(event.target.value)}
               onClick={openTimePicker}
+              disabled={!enabled}
+              aria-disabled={!enabled}
               aria-label={`${label} backup time`}
             />
           </label>
@@ -104,7 +107,7 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
           <label className="schedule-toggle">
             <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
             <span className="schedule-toggle-ui" />
-            <span><b>{label} backup enabled</b><small>{enabled ? 'JAYN Vault will run this schedule automatically.' : 'This automatic schedule is paused.'}</small></span>
+            <span><b>{label} backup enabled</b><small>{enabled ? 'JAYN Vault will run this schedule automatically.' : 'This automatic schedule is paused. Turn it back on to edit the schedule.'}</small></span>
           </label>
 
           <div className="schedule-timezone">
