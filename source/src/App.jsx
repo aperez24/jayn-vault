@@ -145,8 +145,6 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
 
-    // Schedule configuration is intentionally loaded independently so the
-    // Daily/Weekly dial never waits on slower filesystem/storage telemetry.
     fetch('/api/config/schedule')
       .then((response) => response.json())
       .then((scheduleData) => {
@@ -308,6 +306,7 @@ export default function App() {
 
   const dailyTag = timeParts(schedule?.daily?.time || '06:00')
   const weeklyDay = (schedule?.weekly?.day || 'sunday').slice(0, 3).toUpperCase()
+  const weeklyTag = timeParts(schedule?.weekly?.time || '02:00')
   const heroStatus = capacityWarning
     ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.`
     : jobError ? jobError
@@ -339,7 +338,7 @@ export default function App() {
     </section>
 
     <section className="control-surface">
-      <div className="surface-tags"><span>LOCAL NODE</span><span>DAILY <b>{dailyTag.value}</b></span><span>WEEKLY <b>{weeklyDay}</b></span></div>
+      <div className="surface-tags"><span>LOCAL ENGINE</span><span>DAILY <b>{dailyTag.value} {dailyTag.suffix}</b></span><span>WEEKLY <b>{weeklyDay} · {weeklyTag.value} {weeklyTag.suffix}</b></span></div>
       <div className="surface-head"><div><span className="eyebrow"><span>CONTROL SURFACE</span><b /></span><h2>Choose a lens.</h2></div><span className={`surface-status${capacityWarning || job?.status === 'failed' ? ' warning' : ''}`}><i /> {capacityWarning ? 'CAPACITY ALERT' : running ? 'BACKUP ACTIVE' : job?.status === 'failed' ? 'BACKUP ERROR' : 'API ONLINE'}</span></div>
       <div className="lens-nav">{Object.keys(lenses).map((name, index) => <button className={lens === name ? 'selected' : ''} onClick={() => selectLens(name)} key={name}><span>0{index + 1}</span><LensIcon name={name} /><label>{name}</label></button>)}</div>
       {filesystemLens && <div className={`selection-summary${capacityWarning && lens === 'Destinations' ? ' warning' : ''}`}>
