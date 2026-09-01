@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="JAYN Vault API", version="0.4.0")
+app = FastAPI(title="JAYN Vault API", version="0.5.0")
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
 HISTORY_PATH = Path(os.getenv("JAYN_VAULT_HISTORY", "/var/lib/jayn-vault/history.json"))
@@ -36,6 +36,7 @@ WEEKDAYS = {
 }
 SNAPSHOT_SUFFIXES = ("_manual", "_daily", "_weekly")
 REPOSITORY_META_DIR = ".jayn-vault"
+SNAPSHOTS_DIR = "snapshots"
 
 _JOB_LOCK = threading.Lock()
 _JOB_STATE: dict = {
@@ -163,6 +164,19 @@ def _save_config(data: dict) -> None:
         raise HTTPException(status_code=500, detail=f"Unable to save Vault configuration: {exc}") from exc
 
 
+def _vault_timezone() -> ZoneInfo:
+    data = _load_config()
+    timezone_name = str((data.get("schedule") or {}).get("timezone") or DEFAULT_SCHEDULE["timezone"])
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        return ZoneInfo(DEFAULT_SCHEDULE["timezone"])
+
+
+def _vault_now() -> datetime:
+    return datetime.now(_vault_timezone())
+
+
 def _resolve_dir(raw_path: str) -> Path:
     if not raw_path:
         raise HTTPException(status_code=400, detail="A path is required.")
@@ -178,7 +192,6 @@ def _resolve_dir(raw_path: str) -> Path:
 
     if not resolved.is_dir():
         raise HTTPException(status_code=400, detail="The selected path is not a directory.")
-
     return resolved
 
 
@@ -219,7 +232,6 @@ def _scan_source(source: Path) -> tuple[list[dict], list[str], int]:
     for root, dirs, names in os.walk(source, followlinks=False):
         root_path = Path(root)
         relative_root = root_path.relative_to(source)
-
         usable_dirs: list[str] = []
         for dirname in dirs:
             directory = root_path / dirname
@@ -238,14 +250,7 @@ def _scan_source(source: Path) -> tuple[list[dict], list[str], int]:
             except (PermissionError, FileNotFoundError, OSError):
                 continue
             relative = str(path.relative_to(source).as_posix())
-            files.append(
-                {
-                    "path": path,
-                    "relative": relative,
-                    "size": stat.st_size,
-                    "mtime_ns": stat.st_mtime_ns,
-                }
-            )
+            files.append({"path": path, "relative": relative, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
             total_bytes += stat.st_size
 
     return files, directories, total_bytes
@@ -294,7 +299,6 @@ def _schedule_payload(data: dict) -> dict:
     weekly = {**DEFAULT_SCHEDULE["weekly"], **(schedule.get("weekly") or {})}
     next_daily = _next_daily(daily, timezone, now)
     next_weekly = _next_weekly(weekly, timezone, now)
-
     return {
         "timezone": timezone_name,
         "daily": {**daily, "next_run": next_daily.isoformat() if next_daily else None},
@@ -330,9 +334,8 @@ def _append_history(job: dict) -> None:
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             history = []
         history.insert(0, job)
-        history = history[:100]
         temp = HISTORY_PATH.with_suffix(".tmp")
-        temp.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        temp.write_text(json.dumps(history[:100], indent=2), encoding="utf-8")
         os.replace(temp, HISTORY_PATH)
     except OSError:
         pass
@@ -360,9 +363,8 @@ def _repository_meta_path(repository: Path) -> Path:
 
 
 def _load_repository_meta(repository: Path) -> dict:
-    path = _repository_meta_path(repository)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_repository_meta_path(repository).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
@@ -377,10 +379,21 @@ def _save_repository_meta(repository: Path, data: dict) -> None:
     os.replace(temp, path)
 
 
+def _snapshots_root(repository: Path, create: bool = False) -> Path:
+    root = repository / SNAPSHOTS_DIR
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _completed_snapshots(repository: Path) -> list[Path]:
+    root = _snapshots_root(repository)
+    if not root.exists():
+        return []
+
     snapshots: list[Path] = []
     try:
-        for entry in repository.iterdir():
+        for entry in root.iterdir():
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
             if not any(entry.name.endswith(suffix) or f"{suffix}_" in entry.name for suffix in SNAPSHOT_SUFFIXES):
@@ -403,16 +416,14 @@ def _latest_snapshot(repository: Path) -> Path | None:
     return snapshots[-1] if snapshots else None
 
 
-def _hardlink_capability(repository: Path) -> bool:
+def _hardlink_capability(snapshot_root: Path) -> bool:
+    snapshot_root.mkdir(parents=True, exist_ok=True)
     test_id = uuid.uuid4().hex[:10]
-    source = repository / f".jayn-vault-link-source-{test_id}"
-    linked = repository / f".jayn-vault-link-target-{test_id}"
+    source = snapshot_root / f".jayn-vault-link-source-{test_id}"
+    linked = snapshot_root / f".jayn-vault-link-target-{test_id}"
     try:
         source.write_bytes(b"JAYN")
         os.link(source, linked)
-        # CIFS mounts using noserverino can present different client-side inode
-        # numbers for two names that still represent a valid server-side hard link.
-        # A successful link() operation is therefore the authoritative capability test.
         return linked.exists()
     except OSError:
         return False
@@ -452,11 +463,11 @@ def _plan_required_bytes(files: list[dict], previous_snapshot: Path | None, hard
     return required, reusable
 
 
-def _snapshot_name(started: datetime, trigger: str, repository: Path) -> str:
+def _snapshot_name(started: datetime, trigger: str, snapshot_root: Path) -> str:
     base = f"{started.strftime('%Y-%m-%d_%H-%M-%S')}_{trigger}"
     candidate = base
     counter = 1
-    while (repository / candidate).exists() or (repository / f".{candidate}.inprogress").exists():
+    while (snapshot_root / candidate).exists() or (snapshot_root / f".{candidate}.inprogress").exists():
         candidate = f"{base}_{counter:02d}"
         counter += 1
     return candidate
@@ -500,7 +511,7 @@ def _write_manifest(snapshot_root: Path, payload: dict) -> None:
 
 
 def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str = "manual") -> None:
-    started = datetime.now().astimezone()
+    started = _vault_now()
     inprogress: Path | None = None
     try:
         _set_job(
@@ -531,16 +542,17 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
         )
 
         files, directories, total_bytes = _scan_source(source)
+        snapshot_root = _snapshots_root(repository, create=True)
         previous_snapshot = _latest_snapshot(repository)
-        hardlink_supported = _hardlink_capability(repository)
-        required_bytes, reusable_files = _plan_required_bytes(files, previous_snapshot, hardlink_supported)
+        hardlink_supported = _hardlink_capability(snapshot_root)
+        required_bytes, _ = _plan_required_bytes(files, previous_snapshot, hardlink_supported)
         usage = shutil.disk_usage(repository)
         if usage.free < required_bytes:
             raise RuntimeError(f"Destination does not have enough free space. Short by {required_bytes - usage.free} bytes.")
 
-        snapshot_name = _snapshot_name(started, trigger, repository)
-        final_snapshot = repository / snapshot_name
-        inprogress = repository / f".{snapshot_name}.inprogress"
+        snapshot_name = _snapshot_name(started, trigger, snapshot_root)
+        final_snapshot = snapshot_root / snapshot_name
+        inprogress = snapshot_root / f".{snapshot_name}.inprogress"
         inprogress.mkdir(parents=False, exist_ok=False)
 
         for relative in directories:
@@ -595,7 +607,7 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
                 )
                 raise
 
-        finished = datetime.now().astimezone()
+        finished = _vault_now()
         state = _snapshot_job()
         manifest = {
             "format_version": 1,
@@ -607,6 +619,7 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
             "hardlink_supported": hardlink_supported,
             "source": str(source),
             "repository": str(repository),
+            "snapshot_path": str(final_snapshot),
             "started_at": started.isoformat(),
             "finished_at": finished.isoformat(),
             "total_files": len(files),
@@ -626,6 +639,8 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
             repository,
             {
                 "format_version": 1,
+                "layout": "repository-v1",
+                "snapshots_dir": SNAPSHOTS_DIR,
                 "mode": "hardlink-snapshots" if hardlink_supported else "full-snapshots",
                 "hardlink_supported": hardlink_supported,
                 "latest_snapshot": snapshot_name,
@@ -649,7 +664,7 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
                 shutil.rmtree(inprogress)
             except OSError:
                 pass
-        finished = datetime.now().astimezone()
+        finished = _vault_now()
         final = _set_job(
             status="failed",
             phase="failed",
@@ -673,7 +688,6 @@ def filesystem_roots() -> dict:
 @app.get("/api/fs/list")
 def list_directory(path: str = Query(default="/")) -> dict:
     directory = _resolve_dir(path)
-
     if not os.access(directory, os.R_OK | os.X_OK):
         raise HTTPException(status_code=403, detail="The JAYN Vault service account cannot browse this directory.")
 
@@ -752,7 +766,6 @@ def storage_status() -> dict:
     data = _load_config()
     source_raw = data.get("source")
     destination_raw = data.get("destination")
-
     source = None
     destination = None
     source_files: list[dict] = []
@@ -785,6 +798,7 @@ def storage_status() -> dict:
         snapshots = _completed_snapshots(destination_path)
         destination = {
             "path": str(destination_path),
+            "snapshots_path": str(_snapshots_root(destination_path)),
             "total_bytes": usage.total,
             "used_bytes": usage.used,
             "free_bytes": usage.free,
@@ -824,10 +838,12 @@ def repository_status() -> dict:
     return {
         "configured": True,
         "path": str(repository),
+        "snapshots_path": str(_snapshots_root(repository)),
         "snapshot_count": len(snapshots),
         "latest_snapshot": snapshots[-1].name if snapshots else None,
         "hardlink_supported": meta.get("hardlink_supported"),
         "mode": meta.get("mode"),
+        "layout": meta.get("layout", "repository-v1"),
         "snapshots": [path.name for path in reversed(snapshots[-20:])],
     }
 
@@ -858,6 +874,7 @@ def run_backup_now() -> dict:
     if not os.access(repository, os.W_OK | os.X_OK):
         raise HTTPException(status_code=403, detail="The configured destination is not writable.")
 
+    started = _vault_now()
     job_id = uuid.uuid4().hex[:12]
     _set_job(
         id=job_id,
@@ -881,7 +898,7 @@ def run_backup_now() -> dict:
         processed_bytes=0,
         copied_bytes=0,
         current_file=None,
-        started_at=datetime.now().astimezone().isoformat(),
+        started_at=started.isoformat(),
         finished_at=None,
         error=None,
     )
