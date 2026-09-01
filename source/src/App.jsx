@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import FilesystemBrowser from './FilesystemBrowser.jsx'
 import ScheduleEditor from './ScheduleEditor.jsx'
+import RestoreBrowser from './RestoreBrowser.jsx'
 
 const lenses = {
   Daily: { title: 'Daily backup scheduled.', detail: 'Automatic daily protection', route: 'Configured route', metric: '—', value: '—', suffix: '', kicker: 'NEXT BACKUP', telemetry: 'SCHEDULE READY' },
@@ -81,6 +82,7 @@ export default function App() {
   const [lens, setLens] = useState('Daily')
   const [pickerKind, setPickerKind] = useState(null)
   const [scheduleEditorMode, setScheduleEditorMode] = useState(null)
+  const [restoreOpen, setRestoreOpen] = useState(false)
   const [selections, setSelections] = useState({ source: null, destination: null })
   const [storageRoots, setStorageRoots] = useState([])
   const [storageStatus, setStorageStatus] = useState({ source: null, destination: null, capacity_ok: null, shortfall_bytes: 0 })
@@ -103,9 +105,7 @@ export default function App() {
         setStorageStatus(data)
         return data
       }
-    } catch {
-      // Keep last known telemetry if refresh temporarily fails.
-    }
+    } catch {}
     return null
   }
 
@@ -117,9 +117,7 @@ export default function App() {
         setJob(data)
         return data
       }
-    } catch {
-      // Keep the last known job state if polling is interrupted.
-    }
+    } catch {}
     return null
   }
 
@@ -146,9 +144,7 @@ export default function App() {
     if (!running) return undefined
     const timer = window.setInterval(async () => {
       const next = await refreshJob()
-      if (next && next.status !== 'running') {
-        await refreshStorageStatus()
-      }
+      if (next && next.status !== 'running') await refreshStorageStatus()
     }, 750)
     return () => window.clearInterval(timer)
   }, [running])
@@ -175,17 +171,9 @@ export default function App() {
 
   const dialModel = useMemo(() => {
     const model = {
-      value: active.value,
-      suffix: active.suffix,
-      kicker: active.kicker,
-      telemetry: active.telemetry,
-      title: active.title,
-      detail: `${active.detail} → ${active.route}`,
-      metric: active.metric,
-      meta: '',
-      actionLabel: 'CONFIGURE',
-      actionClass: '',
-      onAction: () => {},
+      value: active.value, suffix: active.suffix, kicker: active.kicker, telemetry: active.telemetry,
+      title: active.title, detail: `${active.detail} → ${active.route}`, metric: active.metric, meta: '',
+      actionLabel: 'CONFIGURE', actionClass: '', onAction: () => {},
     }
 
     if (lens === 'Daily') {
@@ -269,7 +257,6 @@ export default function App() {
     setJobError('')
     const fresh = await refreshStorageStatus()
     if (!fresh || fresh.capacity_ok === false) return
-
     try {
       const response = await fetch('/api/jobs/run', { method: 'POST' })
       const data = await response.json()
@@ -289,26 +276,19 @@ export default function App() {
 
   const dailyTag = timeParts(schedule?.daily?.time || '06:00')
   const weeklyDay = (schedule?.weekly?.day || 'sunday').slice(0, 3).toUpperCase()
-
   const heroStatus = capacityWarning
     ? `Destination is short ${formatBytes(storageStatus.shortfall_bytes)}.`
-    : jobError
-      ? jobError
-      : running
-        ? job?.phase === 'scanning' || job?.phase === 'starting'
-          ? 'Scanning source before copy…'
-          : `${Math.round(Number(job?.percent || 0))}% · ${Number(job?.processed_files || 0).toLocaleString()} of ${Number(job?.total_files || 0).toLocaleString()} files`
-        : job?.status === 'failed'
-          ? `Last backup failed · ${job?.error || 'Unknown error'}`
-          : job?.status === 'completed'
-            ? `Last backup complete · ${Number(job?.copied_files || 0).toLocaleString()} copied · ${Number(job?.skipped_files || 0).toLocaleString()} unchanged`
+    : jobError ? jobError
+      : running ? (job?.phase === 'scanning' || job?.phase === 'starting' ? 'Scanning source before copy…' : `${Math.round(Number(job?.percent || 0))}% · ${Number(job?.processed_files || 0).toLocaleString()} of ${Number(job?.total_files || 0).toLocaleString()} files`)
+        : job?.status === 'failed' ? `Last backup failed · ${job?.error || 'Unknown error'}`
+          : job?.status === 'completed' ? `Last backup complete · ${Number(job?.copied_files || 0).toLocaleString()} copied · ${Number(job?.skipped_files || 0).toLocaleString()} unchanged`
             : 'Manual passage ready'
 
   return <main className={`vault-shell${capacityWarning ? ' capacity-warning' : ''}`}>
     <div className="ambient" /><div className="mesh" />
     <header className="topbar">
       <button className="brand" onClick={() => selectLens('Daily')} aria-label="JAYN Vault home"><img className="brand-emblem" src="/jayn-emblem.png" alt="" /><span className="vault-word"><small>JAYN</small><b>VAULT</b></span></button>
-      <div className="top-meta"><button className="profile">AP</button></div>
+      <div className="top-meta"><button className="restore-launch" onClick={() => setRestoreOpen(true)}>RESTORE / HISTORY</button><button className="profile">AP</button></div>
     </header>
 
     <section className="hero">
@@ -341,5 +321,6 @@ export default function App() {
 
     {pickerKind && <FilesystemBrowser kind={pickerKind} onClose={() => setPickerKind(null)} onSaved={(path) => saveSelection(pickerKind, path)} />}
     {scheduleEditorMode && <ScheduleEditor mode={scheduleEditorMode} schedule={schedule} onClose={() => setScheduleEditorMode(null)} onSaved={setSchedule} />}
+    {restoreOpen && <RestoreBrowser onClose={() => setRestoreOpen(false)} />}
   </main>
 }
