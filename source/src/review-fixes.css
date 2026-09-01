@@ -1,6 +1,6 @@
-/* Sep 1 review refinements: stable schedule action + shared desktop grid. */
+/* Sep 1 review refinements: stable dial actions + shared desktop grid. */
 
-/* The radial graphics are visual only. Never let them intercept the controls. */
+/* The radial graphics are visual only. Never let them intercept controls. */
 .dial-wrap .dial,
 .dial-wrap .dial-cross,
 .dial-wrap .scan-beam,
@@ -16,13 +16,16 @@
   z-index: 12;
 }
 
-/* Daily / Weekly schedule editing: quiet branded text action, not a pill. */
+/* All four lens actions use one quiet JAYN-orange language. */
 .dial-wrap.mode-daily .dial-slot-actions > button,
-.dial-wrap.mode-weekly .dial-slot-actions > button {
+.dial-wrap.mode-weekly .dial-slot-actions > button,
+.dial-wrap.mode-sources .dial-slot-actions > button,
+.dial-wrap.mode-destinations .dial-slot-actions > button {
   position: relative;
   z-index: 20;
   min-width: 0 !important;
   width: auto !important;
+  max-width: 200px;
   flex: 0 0 auto !important;
   border: 0 !important;
   border-radius: 0 !important;
@@ -34,19 +37,22 @@
   cursor: pointer !important;
   pointer-events: auto !important;
   white-space: nowrap !important;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  font-weight: 500;
+  text-transform: uppercase !important;
+  letter-spacing: .08em !important;
+  font-size: 10px !important;
+  font-weight: 500 !important;
   line-height: 1 !important;
   display: inline-flex !important;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 6px;
   transition: color .2s ease, opacity .2s ease, transform .2s ease;
 }
 
 .dial-wrap.mode-daily .dial-slot-actions > button:hover,
-.dial-wrap.mode-weekly .dial-slot-actions > button:hover {
+.dial-wrap.mode-weekly .dial-slot-actions > button:hover,
+.dial-wrap.mode-sources .dial-slot-actions > button:hover,
+.dial-wrap.mode-destinations .dial-slot-actions > button:hover {
   color: #ff9a43 !important;
   background: transparent !important;
   border: 0 !important;
@@ -55,13 +61,17 @@
 }
 
 .dial-wrap.mode-daily .dial-slot-actions > button:focus-visible,
-.dial-wrap.mode-weekly .dial-slot-actions > button:focus-visible {
+.dial-wrap.mode-weekly .dial-slot-actions > button:focus-visible,
+.dial-wrap.mode-sources .dial-slot-actions > button:focus-visible,
+.dial-wrap.mode-destinations .dial-slot-actions > button:focus-visible {
   outline: 1px solid rgba(246, 130, 31, .7);
   outline-offset: 5px;
 }
 
 .dial-wrap.mode-daily .dial-slot-actions > button .chevron-icon,
-.dial-wrap.mode-weekly .dial-slot-actions > button .chevron-icon {
+.dial-wrap.mode-weekly .dial-slot-actions > button .chevron-icon,
+.dial-wrap.mode-sources .dial-slot-actions > button .chevron-icon,
+.dial-wrap.mode-destinations .dial-slot-actions > button .chevron-icon {
   width: 12px;
   height: 12px;
   margin: 0;
@@ -69,30 +79,28 @@
   stroke: currentColor;
 }
 
-/* Keep the action row geometrically stable while telemetry loads. */
+/* Undo the older folder-name override so Sources/Destinations match schedules. */
+.dial-wrap.mode-sources .folder-name-button,
+.dial-wrap.mode-destinations .folder-name-button {
+  font-size: 10px !important;
+  font-weight: 500 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+  line-height: 1 !important;
+  padding: 4px 0 !important;
+}
+
+/* The dial now owns source/destination selection; remove the redundant lower panel. */
+.control-surface > .selection-summary {
+  display: none !important;
+}
+
+/* Keep metrics/action geometry stable while data loads. */
 .dial-wrap.mode-daily .dial-slot-actions,
-.dial-wrap.mode-weekly .dial-slot-actions {
-  width: 100%;
+.dial-wrap.mode-weekly .dial-slot-actions,
+.dial-wrap.mode-sources .dial-slot-actions,
+.dial-wrap.mode-destinations .dial-slot-actions {
   min-width: 0;
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) auto !important;
-  align-items: center;
-  column-gap: 12px;
-}
-
-.dial-wrap.mode-daily .dial-slot-metrics,
-.dial-wrap.mode-weekly .dial-slot-metrics {
-  min-width: 0;
-  overflow: hidden;
-}
-
-.dial-wrap.mode-daily .dial-slot-metrics strong,
-.dial-wrap.mode-daily .dial-slot-metrics small,
-.dial-wrap.mode-weekly .dial-slot-metrics strong,
-.dial-wrap.mode-weekly .dial-slot-metrics small {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Match the control surface to the visual span of the hero above it. */
@@ -106,20 +114,16 @@
 
   .surface-tags,
   .surface-head,
-  .lens-nav,
-  .selection-summary {
+  .lens-nav {
     width: 100%;
   }
 }
 
 @media (max-width: 900px) {
-  .dial-wrap.mode-daily .dial-slot-actions,
-  .dial-wrap.mode-weekly .dial-slot-actions {
-    column-gap: 8px;
-  }
-
   .dial-wrap.mode-daily .dial-slot-actions > button,
-  .dial-wrap.mode-weekly .dial-slot-actions > button {
+  .dial-wrap.mode-weekly .dial-slot-actions > button,
+  .dial-wrap.mode-sources .dial-slot-actions > button,
+  .dial-wrap.mode-destinations .dial-slot-actions > button {
     font-size: 8px !important;
   }
 }
