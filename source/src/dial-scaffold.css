@@ -46,22 +46,26 @@
  */
 .dial-slot-actions {
   align-self: stretch;
-  width: min(220px, 100%);
+  width: min(208px, 94%);
   min-height: 64px;
   display: grid !important;
   grid-template-rows: 22px 38px;
   align-items: center;
   justify-items: center;
   row-gap: 4px;
+  overflow: visible !important;
 }
 
 .dial-slot-metrics {
   grid-row: 1;
   width: 100%;
+  box-sizing: border-box;
+  padding-inline: 7px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
-  column-gap: 12px;
+  column-gap: 8px;
+  overflow: visible;
 }
 
 .dial-slot-metrics > strong,
@@ -71,10 +75,15 @@
   min-width: 0;
 }
 
-.dial-slot-metrics > strong { justify-self: end; white-space: nowrap; }
+.dial-slot-metrics > strong {
+  justify-self: end;
+  white-space: nowrap;
+  overflow: visible;
+}
 .dial-slot-metrics > small {
   justify-self: start;
   white-space: nowrap;
+  overflow: visible;
   font-size: 7.5px !important;
 }
 
