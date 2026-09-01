@@ -114,17 +114,17 @@
 }
 
 /*
- * Desktop composition: the hero is intentionally offset left rather than
- * viewport-centered. Match that same visual grid so the control surface reads
- * as a continuation of the hero instead of a separate floating island.
+ * Desktop composition: use the same centered visual frame as the hero above.
+ * No independent horizontal offset; the control surface should share the
+ * hero's centerline and read as one continuous composition.
  */
 @media (min-width: 901px) {
   .control-surface {
-    width: min(1240px, calc(100vw - 72px)) !important;
+    width: min(940px, calc(100vw - 72px)) !important;
     max-width: none !important;
     margin-left: auto !important;
     margin-right: auto !important;
-    transform: translate(-70px, -68px) !important;
+    transform: translateY(-68px) !important;
   }
 
   .surface-tags,
