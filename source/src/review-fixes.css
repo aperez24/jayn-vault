@@ -16,6 +16,16 @@
   z-index: 12;
 }
 
+/* Keep schedule copy from reflowing while the site font finishes loading. */
+.dial-wrap.mode-daily .dial-slot-title,
+.dial-wrap.mode-weekly .dial-slot-title {
+  width: 210px;
+  max-width: 92%;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-align: center;
+}
+
 /* All four lens actions use one quiet JAYN-orange language. */
 .dial-wrap.mode-daily .dial-slot-actions > button,
 .dial-wrap.mode-weekly .dial-slot-actions > button,
@@ -125,5 +135,11 @@
   .dial-wrap.mode-sources .dial-slot-actions > button,
   .dial-wrap.mode-destinations .dial-slot-actions > button {
     font-size: 8px !important;
+  }
+
+  .dial-wrap.mode-daily .dial-slot-title,
+  .dial-wrap.mode-weekly .dial-slot-title {
+    width: 190px;
+    max-width: 90%;
   }
 }
