@@ -35,7 +35,7 @@ function timeParts(hhmm) {
 }
 
 function formatRunDate(iso, timezone, options) {
-  if (!iso) return 'Schedule paused'
+  if (!iso) return '—'
   try {
     return new Intl.DateTimeFormat('en-US', { timeZone: timezone || 'America/New_York', ...options }).format(new Date(iso))
   } catch {
