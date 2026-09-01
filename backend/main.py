@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import smtplib
 import threading
 import uuid
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -13,10 +15,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="JAYN Vault API", version="0.5.0")
+app = FastAPI(title="JAYN Vault API", version="0.6.0")
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
 HISTORY_PATH = Path(os.getenv("JAYN_VAULT_HISTORY", "/var/lib/jayn-vault/history.json"))
+NOTIFICATION_HISTORY_PATH = Path(os.getenv("JAYN_VAULT_NOTIFICATION_HISTORY", "/var/lib/jayn-vault/notifications.json"))
 DEFAULT_STORAGE_ROOTS = [
     {"id": "jaynos", "name": "jaynOS", "path": "/mnt/jayn-vault/sources/jaynos"},
 ]
@@ -24,6 +27,13 @@ DEFAULT_SCHEDULE = {
     "timezone": "America/New_York",
     "daily": {"enabled": True, "time": "06:00"},
     "weekly": {"enabled": True, "day": "sunday", "time": "02:00"},
+}
+DEFAULT_NOTIFICATIONS = {
+    "enabled": True,
+    "recipients": [],
+    "on_success": True,
+    "on_warning": True,
+    "on_failure": True,
 }
 WEEKDAYS = {
     "monday": 0,
@@ -39,6 +49,7 @@ REPOSITORY_META_DIR = ".jayn-vault"
 SNAPSHOTS_DIR = "snapshots"
 
 _JOB_LOCK = threading.Lock()
+_NOTIFICATION_LOCK = threading.Lock()
 _JOB_STATE: dict = {
     "id": None,
     "status": "idle",
@@ -64,6 +75,9 @@ _JOB_STATE: dict = {
     "started_at": None,
     "finished_at": None,
     "error": None,
+    "outcome": None,
+    "warning_files": 0,
+    "warnings": [],
 }
 
 
@@ -115,6 +129,28 @@ class ScheduleRequest(BaseModel):
         return value
 
 
+class NotificationSettingsRequest(BaseModel):
+    enabled: bool = True
+    recipients: list[str] = Field(default_factory=list)
+    on_success: bool = True
+    on_warning: bool = True
+    on_failure: bool = True
+
+    @field_validator("recipients")
+    @classmethod
+    def validate_recipients(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for raw in values:
+            address = raw.strip().lower()
+            if not address:
+                continue
+            if "@" not in address or address.startswith("@") or address.endswith("@"):
+                raise ValueError(f"Invalid email address: {raw}")
+            if address not in cleaned:
+                cleaned.append(address)
+        return cleaned
+
+
 def _parse_hhmm(value: str) -> tuple[int, int]:
     try:
         parsed = datetime.strptime(value, "%H:%M")
@@ -128,6 +164,7 @@ def _default_config() -> dict:
         "source": None,
         "destination": None,
         "schedule": json.loads(json.dumps(DEFAULT_SCHEDULE)),
+        "notifications": json.loads(json.dumps(DEFAULT_NOTIFICATIONS)),
     }
 
 
@@ -144,6 +181,7 @@ def _load_config() -> dict:
     data.setdefault("source", None)
     data.setdefault("destination", None)
     data.setdefault("schedule", json.loads(json.dumps(DEFAULT_SCHEDULE)))
+    data.setdefault("notifications", json.loads(json.dumps(DEFAULT_NOTIFICATIONS)))
     schedule = data["schedule"]
     if not isinstance(schedule, dict):
         schedule = json.loads(json.dumps(DEFAULT_SCHEDULE))
@@ -151,6 +189,12 @@ def _load_config() -> dict:
     schedule.setdefault("timezone", DEFAULT_SCHEDULE["timezone"])
     schedule.setdefault("daily", dict(DEFAULT_SCHEDULE["daily"]))
     schedule.setdefault("weekly", dict(DEFAULT_SCHEDULE["weekly"]))
+    notifications = data["notifications"]
+    if not isinstance(notifications, dict):
+        notifications = json.loads(json.dumps(DEFAULT_NOTIFICATIONS))
+        data["notifications"] = notifications
+    for key, value in DEFAULT_NOTIFICATIONS.items():
+        notifications.setdefault(key, json.loads(json.dumps(value)))
     return data
 
 
@@ -224,12 +268,16 @@ def _storage_roots() -> list[dict]:
     return result
 
 
-def _scan_source(source: Path) -> tuple[list[dict], list[str], int]:
+def _scan_source(source: Path, diagnostics: list[dict] | None = None) -> tuple[list[dict], list[str], int]:
     files: list[dict] = []
     directories: list[str] = []
     total_bytes = 0
 
-    for root, dirs, names in os.walk(source, followlinks=False):
+    def on_walk_error(error: OSError) -> None:
+        if diagnostics is not None:
+            diagnostics.append({"path": getattr(error, "filename", str(source)), "reason": str(error)})
+
+    for root, dirs, names in os.walk(source, followlinks=False, onerror=on_walk_error):
         root_path = Path(root)
         relative_root = root_path.relative_to(source)
         usable_dirs: list[str] = []
@@ -247,7 +295,9 @@ def _scan_source(source: Path) -> tuple[list[dict], list[str], int]:
                 if path.is_symlink():
                     continue
                 stat = path.stat()
-            except (PermissionError, FileNotFoundError, OSError):
+            except (PermissionError, FileNotFoundError, OSError) as exc:
+                if diagnostics is not None:
+                    diagnostics.append({"path": str(path), "reason": str(exc)})
                 continue
             relative = str(path.relative_to(source).as_posix())
             files.append({"path": path, "relative": relative, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
@@ -339,6 +389,149 @@ def _append_history(job: dict) -> None:
         os.replace(temp, HISTORY_PATH)
     except OSError:
         pass
+
+
+def _read_notification_history() -> list[dict]:
+    try:
+        data = json.loads(NOTIFICATION_HISTORY_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+
+
+def _append_notification(event: dict) -> dict:
+    with _NOTIFICATION_LOCK:
+        history = _read_notification_history()
+        history.insert(0, event)
+        NOTIFICATION_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temp = NOTIFICATION_HISTORY_PATH.with_suffix(".tmp")
+        temp.write_text(json.dumps(history[:500], indent=2), encoding="utf-8")
+        os.replace(temp, NOTIFICATION_HISTORY_PATH)
+    return event
+
+
+def _update_notification(event_id: str, **updates) -> dict | None:
+    with _NOTIFICATION_LOCK:
+        history = _read_notification_history()
+        event = next((item for item in history if item.get("id") == event_id), None)
+        if event is None:
+            return None
+        event.update(updates)
+        temp = NOTIFICATION_HISTORY_PATH.with_suffix(".tmp")
+        temp.write_text(json.dumps(history[:500], indent=2), encoding="utf-8")
+        os.replace(temp, NOTIFICATION_HISTORY_PATH)
+        return dict(event)
+
+
+def _smtp_settings() -> dict:
+    host = os.getenv("JAYN_VAULT_SMTP_HOST", "").strip()
+    username = os.getenv("JAYN_VAULT_SMTP_USERNAME", "").strip()
+    sender = os.getenv("JAYN_VAULT_SMTP_FROM", "").strip() or username
+    try:
+        port = int(os.getenv("JAYN_VAULT_SMTP_PORT", "587"))
+    except ValueError:
+        port = 587
+    return {
+        "host": host,
+        "port": port,
+        "username": username,
+        "password": os.getenv("JAYN_VAULT_SMTP_PASSWORD", ""),
+        "sender": sender,
+        "starttls": os.getenv("JAYN_VAULT_SMTP_STARTTLS", "true").lower() in {"1", "true", "yes", "on"},
+        "ssl": os.getenv("JAYN_VAULT_SMTP_SSL", "false").lower() in {"1", "true", "yes", "on"},
+    }
+
+
+def _send_email(subject: str, body: str, recipients: list[str]) -> None:
+    smtp = _smtp_settings()
+    if not smtp["host"] or not smtp["sender"]:
+        raise RuntimeError("SMTP is not configured on the Vault Server.")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = smtp["sender"]
+    message["To"] = ", ".join(recipients)
+    message.set_content(body)
+
+    client_class = smtplib.SMTP_SSL if smtp["ssl"] else smtplib.SMTP
+    with client_class(smtp["host"], smtp["port"], timeout=20) as client:
+        if not smtp["ssl"] and smtp["starttls"]:
+            client.starttls()
+        if smtp["username"]:
+            client.login(smtp["username"], smtp["password"])
+        client.send_message(message)
+
+
+def _notification_reason(job: dict) -> str:
+    outcome = job.get("outcome")
+    if outcome == "failure":
+        return str(job.get("error") or "Backup did not complete.")
+    if outcome == "warning":
+        count = int(job.get("warning_files") or 0)
+        return f"Backup completed, but {count} file system item{'s' if count != 1 else ''} could not be read."
+    return "Backup completed successfully."
+
+
+def _backup_email(job: dict) -> tuple[str, str]:
+    outcome = str(job.get("outcome") or "failure")
+    labels = {"success": "Completed Successfully", "warning": "Completed With Warnings", "failure": "Failed"}
+    subject = f"JAYN Vault Backup {labels.get(outcome, 'Update')}"
+    body = "\n".join([
+        subject,
+        "",
+        f"Status: {outcome.upper()}",
+        f"Run ID: {job.get('id') or '—'}",
+        f"Trigger: {str(job.get('trigger') or 'manual').title()}",
+        f"Source: {job.get('source') or '—'}",
+        f"Destination: {job.get('destination') or '—'}",
+        f"Started: {job.get('started_at') or '—'}",
+        f"Finished: {job.get('finished_at') or '—'}",
+        f"Files processed: {int(job.get('processed_files') or 0):,}",
+        f"Files copied: {int(job.get('copied_files') or 0):,}",
+        f"Files reused: {int(job.get('linked_files') or 0):,}",
+        f"Unreadable items: {int(job.get('warning_files') or 0):,}",
+        f"Data transferred: {int(job.get('copied_bytes') or 0):,} bytes",
+        "",
+        f"Reason: {_notification_reason(job)}",
+    ])
+    return subject, body
+
+
+def _dispatch_backup_notification(job: dict) -> dict:
+    config = _load_config().get("notifications") or DEFAULT_NOTIFICATIONS
+    outcome = str(job.get("outcome") or "failure")
+    recipients = list(config.get("recipients") or [])
+    enabled_for_outcome = bool(config.get(f"on_{outcome}", True))
+    reason = _notification_reason(job)
+    event = {
+        "id": uuid.uuid4().hex[:12],
+        "created_at": _vault_now().isoformat(),
+        "sent_at": None,
+        "type": "backup",
+        "backup_run_id": job.get("id"),
+        "trigger": job.get("trigger"),
+        "severity": outcome,
+        "reason": reason,
+        "channel": "email",
+        "recipients": recipients,
+        "delivery_status": "pending",
+        "delivery_error": None,
+    }
+    if not config.get("enabled", True) or not enabled_for_outcome:
+        event["delivery_status"] = "suppressed"
+        return _append_notification(event)
+    if not recipients:
+        event["delivery_status"] = "failed"
+        event["delivery_error"] = "No notification recipients configured."
+        return _append_notification(event)
+
+    _append_notification(event)
+    try:
+        subject, body = _backup_email(job)
+        _send_email(subject, body, recipients)
+        return _update_notification(event["id"], delivery_status="sent", sent_at=_vault_now().isoformat()) or event
+    except Exception as exc:
+        return _update_notification(event["id"], delivery_status="failed", delivery_error=str(exc)) or event
 
 
 def _path_contains(parent: Path, child: Path) -> bool:
@@ -539,9 +732,13 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
             started_at=started.isoformat(),
             finished_at=None,
             error=None,
+            outcome=None,
+            warning_files=0,
+            warnings=[],
         )
 
-        files, directories, total_bytes = _scan_source(source)
+        scan_diagnostics: list[dict] = []
+        files, directories, total_bytes = _scan_source(source, diagnostics=scan_diagnostics)
         snapshot_root = _snapshots_root(repository, create=True)
         previous_snapshot = _latest_snapshot(repository)
         hardlink_supported = _hardlink_capability(snapshot_root)
@@ -629,6 +826,9 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
             "copied_files": int(state.get("copied_files") or 0),
             "reused_files": int(state.get("linked_files") or 0),
             "failed_files": int(state.get("failed_files") or 0),
+            "warning_files": len(scan_diagnostics),
+            "warnings": scan_diagnostics[:50],
+            "outcome": "warning" if scan_diagnostics else "success",
         }
         _write_manifest(inprogress, manifest)
         os.replace(inprogress, final_snapshot)
@@ -652,12 +852,20 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
         final = _set_job(
             status="completed",
             phase="complete",
+            outcome="warning" if scan_diagnostics else "success",
             percent=100.0,
             current_file=None,
             snapshot=snapshot_name,
             finished_at=finished.isoformat(),
+            warning_files=len(scan_diagnostics),
+            warnings=scan_diagnostics[:50],
         )
         _append_history(final)
+        try:
+            _dispatch_backup_notification(final)
+        except Exception:
+            # Notification delivery and audit failures never change the backup result.
+            pass
     except Exception as exc:
         if inprogress is not None:
             try:
@@ -668,11 +876,17 @@ def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str
         final = _set_job(
             status="failed",
             phase="failed",
+            outcome="failure",
             current_file=None,
             finished_at=finished.isoformat(),
             error=str(exc),
         )
         _append_history(final)
+        try:
+            _dispatch_backup_notification(final)
+        except Exception:
+            # Preserve the authoritative backup failure even if alert delivery also fails.
+            pass
 
 
 @app.get("/api/health")
@@ -759,6 +973,65 @@ def set_schedule(request: ScheduleRequest) -> dict:
     data["schedule"] = request.model_dump()
     _save_config(data)
     return _schedule_payload(data)
+
+
+@app.get("/api/config/notifications")
+def get_notification_settings() -> dict:
+    config = _load_config().get("notifications") or DEFAULT_NOTIFICATIONS
+    smtp = _smtp_settings()
+    return {
+        **DEFAULT_NOTIFICATIONS,
+        **config,
+        "smtp_configured": bool(smtp["host"] and smtp["sender"]),
+        "smtp_sender": smtp["sender"] or None,
+    }
+
+
+@app.post("/api/config/notifications")
+def set_notification_settings(request: NotificationSettingsRequest) -> dict:
+    data = _load_config()
+    data["notifications"] = request.model_dump()
+    _save_config(data)
+    return get_notification_settings()
+
+
+@app.get("/api/notifications/history")
+def notification_history(limit: int = Query(default=100, ge=1, le=500)) -> dict:
+    return {"items": _read_notification_history()[:limit]}
+
+
+@app.post("/api/notifications/test")
+def send_test_notification() -> dict:
+    config = _load_config().get("notifications") or DEFAULT_NOTIFICATIONS
+    recipients = list(config.get("recipients") or [])
+    if not recipients:
+        raise HTTPException(status_code=400, detail="Add at least one notification recipient before sending a test email.")
+
+    event = {
+        "id": uuid.uuid4().hex[:12],
+        "created_at": _vault_now().isoformat(),
+        "sent_at": None,
+        "type": "test",
+        "backup_run_id": None,
+        "trigger": "test",
+        "severity": "success",
+        "reason": "Notification delivery test requested from JAYN Vault.",
+        "channel": "email",
+        "recipients": recipients,
+        "delivery_status": "pending",
+        "delivery_error": None,
+    }
+    _append_notification(event)
+    try:
+        _send_email(
+            "JAYN Vault Test Notification",
+            "JAYN Vault email notifications are connected and ready.\n\nThis message was generated by the Vault Server test-email control.",
+            recipients,
+        )
+        event = _update_notification(event["id"], delivery_status="sent", sent_at=_vault_now().isoformat()) or event
+    except Exception as exc:
+        event = _update_notification(event["id"], delivery_status="failed", delivery_error=str(exc)) or event
+    return event
 
 
 @app.get("/api/storage/status")
@@ -901,6 +1174,9 @@ def run_backup_now() -> dict:
         started_at=started.isoformat(),
         finished_at=None,
         error=None,
+        outcome=None,
+        warning_files=0,
+        warnings=[],
     )
 
     thread = threading.Thread(target=_run_backup_worker, args=(job_id, source, repository, "manual"), daemon=True)
