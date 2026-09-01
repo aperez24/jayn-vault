@@ -10,6 +10,26 @@ const lenses = {
   Destinations: { title: 'Choose where it lands.', detail: 'Select the folder that will receive the backup', route: 'Writable storage', metric: 'DST', value: '02', suffix: '', kicker: 'DESTINATION ROUTE', telemetry: 'READY TO SELECT' },
 }
 
+const EMPTY_STORAGE_STATUS = { source: null, destination: null, capacity_ok: null, shortfall_bytes: 0 }
+const STORAGE_STATUS_CACHE_KEY = 'jayn-vault:storage-status:v1'
+
+function loadCachedStorageStatus() {
+  if (typeof window === 'undefined') return EMPTY_STORAGE_STATUS
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(STORAGE_STATUS_CACHE_KEY) || 'null')
+    return cached && typeof cached === 'object' ? { ...EMPTY_STORAGE_STATUS, ...cached } : EMPTY_STORAGE_STATUS
+  } catch {
+    return EMPTY_STORAGE_STATUS
+  }
+}
+
+function cacheStorageStatus(status) {
+  if (typeof window === 'undefined' || !status || typeof status !== 'object') return
+  try {
+    window.localStorage.setItem(STORAGE_STATUS_CACHE_KEY, JSON.stringify(status))
+  } catch {}
+}
+
 function formatBytesParts(bytes) {
   if (bytes == null || Number.isNaN(Number(bytes))) return { value: '—', unit: '' }
   const amount = Number(bytes)
@@ -85,7 +105,7 @@ export default function App() {
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [selections, setSelections] = useState({ source: null, destination: null })
   const [storageRoots, setStorageRoots] = useState([])
-  const [storageStatus, setStorageStatus] = useState({ source: null, destination: null, capacity_ok: null, shortfall_bytes: 0 })
+  const [storageStatus, setStorageStatus] = useState(() => loadCachedStorageStatus())
   const [schedule, setSchedule] = useState(null)
   const [job, setJob] = useState({ status: 'idle', phase: 'idle', percent: 0 })
   const [jobError, setJobError] = useState('')
@@ -103,6 +123,7 @@ export default function App() {
       const data = await response.json()
       if (response.ok) {
         setStorageStatus(data)
+        cacheStorageStatus(data)
         return data
       }
     } catch {}
@@ -142,7 +163,10 @@ export default function App() {
       if (cancelled) return
       setSelections({ source: selection?.source || null, destination: selection?.destination || null })
       setStorageRoots(rootsData?.roots || [])
-      if (status) setStorageStatus(status)
+      if (status) {
+        setStorageStatus(status)
+        cacheStorageStatus(status)
+      }
       if (jobData) setJob(jobData)
     }).catch(() => {})
     return () => { cancelled = true }
