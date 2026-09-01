@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
+import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -11,9 +14,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="JAYN Vault API", version="0.2.0")
+app = FastAPI(title="JAYN Vault API", version="0.3.0")
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
+HISTORY_PATH = Path(os.getenv("JAYN_VAULT_HISTORY", "/var/lib/jayn-vault/history.json"))
 DEFAULT_STORAGE_ROOTS = [
     {"id": "jaynos", "name": "jaynOS", "path": "/mnt/jayn-vault/sources/jaynos"},
 ]
@@ -30,6 +34,28 @@ WEEKDAYS = {
     "friday": 4,
     "saturday": 5,
     "sunday": 6,
+}
+
+_JOB_LOCK = threading.Lock()
+_JOB_STATE: dict = {
+    "id": None,
+    "status": "idle",
+    "phase": "idle",
+    "percent": 0.0,
+    "source": None,
+    "destination": None,
+    "total_files": 0,
+    "processed_files": 0,
+    "copied_files": 0,
+    "skipped_files": 0,
+    "failed_files": 0,
+    "total_bytes": 0,
+    "processed_bytes": 0,
+    "copied_bytes": 0,
+    "current_file": None,
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
 }
 
 
@@ -245,6 +271,189 @@ def _schedule_payload(data: dict) -> dict:
     }
 
 
+def _snapshot_job() -> dict:
+    with _JOB_LOCK:
+        return dict(_JOB_STATE)
+
+
+def _set_job(**updates) -> dict:
+    with _JOB_LOCK:
+        _JOB_STATE.update(updates)
+        total = int(_JOB_STATE.get("total_bytes") or 0)
+        processed = int(_JOB_STATE.get("processed_bytes") or 0)
+        if total > 0:
+            _JOB_STATE["percent"] = round(min(100.0, (processed / total) * 100.0), 1)
+        elif _JOB_STATE.get("status") == "completed":
+            _JOB_STATE["percent"] = 100.0
+        return dict(_JOB_STATE)
+
+
+def _append_history(job: dict) -> None:
+    try:
+        HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            history = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+            if not isinstance(history, list):
+                history = []
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            history = []
+        history.insert(0, job)
+        history = history[:100]
+        temp = HISTORY_PATH.with_suffix(".tmp")
+        temp.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        os.replace(temp, HISTORY_PATH)
+    except OSError:
+        pass
+
+
+def _path_contains(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _validate_backup_paths(source: Path, destination: Path) -> None:
+    if source == destination:
+        raise HTTPException(status_code=400, detail="Source and destination cannot be the same folder.")
+    if _path_contains(source, destination):
+        raise HTTPException(status_code=400, detail="Destination cannot be inside the source folder.")
+    if _path_contains(destination, source):
+        raise HTTPException(status_code=400, detail="Source cannot be inside the destination folder.")
+
+
+def _scan_source(source: Path) -> tuple[list[tuple[Path, str, int, int]], list[str], int]:
+    files: list[tuple[Path, str, int, int]] = []
+    directories: list[str] = []
+    total_bytes = 0
+    for root, dirs, names in os.walk(source, followlinks=False):
+        root_path = Path(root)
+        relative_root = root_path.relative_to(source)
+        for dirname in dirs:
+            directory = root_path / dirname
+            if directory.is_symlink():
+                continue
+            directories.append(str((relative_root / dirname).as_posix()))
+        for name in names:
+            path = root_path / name
+            try:
+                if path.is_symlink():
+                    continue
+                stat = path.stat()
+            except (PermissionError, FileNotFoundError, OSError):
+                continue
+            relative = str(path.relative_to(source).as_posix())
+            files.append((path, relative, stat.st_size, stat.st_mtime_ns))
+            total_bytes += stat.st_size
+    return files, directories, total_bytes
+
+
+def _copy_file_with_progress(source_file: Path, destination_file: Path, file_size: int) -> int:
+    temp_file = destination_file.with_name(f".{destination_file.name}.jayn-vault-part")
+    copied = 0
+    destination_file.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with source_file.open("rb") as src, temp_file.open("wb") as dst:
+            while True:
+                chunk = src.read(4 * 1024 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+                copied += len(chunk)
+                _set_job(
+                    processed_bytes=int(_snapshot_job().get("processed_bytes") or 0) + len(chunk),
+                    copied_bytes=int(_snapshot_job().get("copied_bytes") or 0) + len(chunk),
+                )
+        shutil.copystat(source_file, temp_file, follow_symlinks=False)
+        os.replace(temp_file, destination_file)
+        return copied
+    finally:
+        try:
+            if temp_file.exists():
+                temp_file.unlink()
+        except OSError:
+            pass
+
+
+def _run_backup_worker(job_id: str, source: Path, destination: Path) -> None:
+    started = datetime.now().astimezone()
+    try:
+        _set_job(
+            id=job_id,
+            status="running",
+            phase="scanning",
+            percent=0.0,
+            source=str(source),
+            destination=str(destination),
+            total_files=0,
+            processed_files=0,
+            copied_files=0,
+            skipped_files=0,
+            failed_files=0,
+            total_bytes=0,
+            processed_bytes=0,
+            copied_bytes=0,
+            current_file=None,
+            started_at=started.isoformat(),
+            finished_at=None,
+            error=None,
+        )
+
+        files, directories, total_bytes = _scan_source(source)
+        usage = shutil.disk_usage(destination)
+        if usage.free < total_bytes:
+            raise RuntimeError(f"Destination does not have enough free space. Short by {total_bytes - usage.free} bytes.")
+
+        for relative in directories:
+            (destination / relative).mkdir(parents=True, exist_ok=True)
+
+        _set_job(phase="copying", total_files=len(files), total_bytes=total_bytes)
+
+        for source_file, relative, file_size, source_mtime_ns in files:
+            destination_file = destination / relative
+            _set_job(current_file=relative)
+
+            try:
+                unchanged = False
+                if destination_file.exists() and destination_file.is_file():
+                    try:
+                        dest_stat = destination_file.stat()
+                        unchanged = dest_stat.st_size == file_size and dest_stat.st_mtime_ns == source_mtime_ns
+                    except OSError:
+                        unchanged = False
+
+                state = _snapshot_job()
+                if unchanged:
+                    _set_job(
+                        processed_bytes=int(state.get("processed_bytes") or 0) + file_size,
+                        processed_files=int(state.get("processed_files") or 0) + 1,
+                        skipped_files=int(state.get("skipped_files") or 0) + 1,
+                    )
+                else:
+                    _copy_file_with_progress(source_file, destination_file, file_size)
+                    state = _snapshot_job()
+                    _set_job(
+                        processed_files=int(state.get("processed_files") or 0) + 1,
+                        copied_files=int(state.get("copied_files") or 0) + 1,
+                    )
+            except Exception:
+                state = _snapshot_job()
+                _set_job(
+                    processed_files=int(state.get("processed_files") or 0) + 1,
+                    failed_files=int(state.get("failed_files") or 0) + 1,
+                )
+                raise
+
+        finished = datetime.now().astimezone()
+        final = _set_job(status="completed", phase="complete", percent=100.0, current_file=None, finished_at=finished.isoformat())
+        _append_history(final)
+    except Exception as exc:
+        finished = datetime.now().astimezone()
+        final = _set_job(status="failed", phase="failed", current_file=None, finished_at=finished.isoformat(), error=str(exc))
+        _append_history(final)
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "service": "jayn-vault-api"}
@@ -287,7 +496,6 @@ def list_directory(path: str = Query(default="/")) -> dict:
         raise HTTPException(status_code=500, detail=f"Unable to browse directory: {exc}") from exc
 
     items.sort(key=lambda item: (item["type"] != "directory", item["name"].casefold()))
-
     parent = None if directory == directory.parent else str(directory.parent)
     return {
         "path": str(directory),
@@ -307,7 +515,6 @@ def get_selection() -> dict:
 @app.post("/api/config/selection", response_model=SelectionState)
 def set_selection(request: SelectionRequest) -> dict:
     directory = _resolve_dir(request.path)
-
     if request.kind == "source":
         if not os.access(directory, os.R_OK | os.X_OK):
             raise HTTPException(status_code=403, detail="The JAYN Vault service account cannot read this source directory.")
@@ -370,3 +577,72 @@ def storage_status() -> dict:
             shortfall_bytes = source["bytes"] - destination["free_bytes"]
 
     return {"source": source, "destination": destination, "capacity_ok": capacity_ok, "shortfall_bytes": shortfall_bytes}
+
+
+@app.get("/api/jobs/current")
+def current_job() -> dict:
+    return _snapshot_job()
+
+
+@app.post("/api/jobs/run")
+def run_backup_now() -> dict:
+    current = _snapshot_job()
+    if current.get("status") == "running":
+        raise HTTPException(status_code=409, detail="A backup is already running.")
+
+    data = _load_config()
+    source_raw = data.get("source")
+    destination_raw = data.get("destination")
+    if not source_raw or not destination_raw:
+        raise HTTPException(status_code=400, detail="Both a source and destination must be selected before running a backup.")
+
+    source = _resolve_dir(source_raw)
+    destination = _resolve_dir(destination_raw)
+    _validate_backup_paths(source, destination)
+
+    if not os.access(source, os.R_OK | os.X_OK):
+        raise HTTPException(status_code=403, detail="The configured source is not readable.")
+    if not os.access(destination, os.W_OK | os.X_OK):
+        raise HTTPException(status_code=403, detail="The configured destination is not writable.")
+
+    total_bytes, _, _ = _directory_size(source)
+    usage = shutil.disk_usage(destination)
+    if usage.free < total_bytes:
+        raise HTTPException(status_code=409, detail=f"Destination does not have enough free space. Short by {total_bytes - usage.free} bytes.")
+
+    job_id = uuid.uuid4().hex[:12]
+    _set_job(
+        id=job_id,
+        status="running",
+        phase="starting",
+        percent=0.0,
+        source=str(source),
+        destination=str(destination),
+        total_files=0,
+        processed_files=0,
+        copied_files=0,
+        skipped_files=0,
+        failed_files=0,
+        total_bytes=total_bytes,
+        processed_bytes=0,
+        copied_bytes=0,
+        current_file=None,
+        started_at=datetime.now().astimezone().isoformat(),
+        finished_at=None,
+        error=None,
+    )
+
+    thread = threading.Thread(target=_run_backup_worker, args=(job_id, source, destination), daemon=True)
+    thread.start()
+    return _snapshot_job()
+
+
+@app.get("/api/jobs/history")
+def job_history(limit: int = Query(default=20, ge=1, le=100)) -> dict:
+    try:
+        history = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
+        if not isinstance(history, list):
+            history = []
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        history = []
+    return {"items": history[:limit]}
