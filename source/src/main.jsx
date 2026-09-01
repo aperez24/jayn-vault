@@ -8,6 +8,7 @@ import './schedule-editor.css'
 import './restore-browser.css'
 import './recovery-ui.css'
 import './review-fixes.css'
+import './notification-center.css'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
