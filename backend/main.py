@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import threading
-import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -14,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
-app = FastAPI(title="JAYN Vault API", version="0.3.0")
+app = FastAPI(title="JAYN Vault API", version="0.4.0")
 
 CONFIG_PATH = Path(os.getenv("JAYN_VAULT_CONFIG", "/var/lib/jayn-vault/config.json"))
 HISTORY_PATH = Path(os.getenv("JAYN_VAULT_HISTORY", "/var/lib/jayn-vault/history.json"))
@@ -35,6 +34,8 @@ WEEKDAYS = {
     "saturday": 5,
     "sunday": 6,
 }
+SNAPSHOT_SUFFIXES = ("_manual", "_daily", "_weekly")
+REPOSITORY_META_DIR = ".jayn-vault"
 
 _JOB_LOCK = threading.Lock()
 _JOB_STATE: dict = {
@@ -42,14 +43,20 @@ _JOB_STATE: dict = {
     "status": "idle",
     "phase": "idle",
     "percent": 0.0,
+    "trigger": None,
     "source": None,
     "destination": None,
+    "snapshot": None,
+    "previous_snapshot": None,
+    "hardlink_supported": None,
     "total_files": 0,
     "processed_files": 0,
     "copied_files": 0,
+    "linked_files": 0,
     "skipped_files": 0,
     "failed_files": 0,
     "total_bytes": 0,
+    "required_bytes": 0,
     "processed_bytes": 0,
     "copied_bytes": 0,
     "current_file": None,
@@ -204,24 +211,49 @@ def _storage_roots() -> list[dict]:
     return result
 
 
-def _directory_size(directory: Path) -> tuple[int, int, int]:
+def _scan_source(source: Path) -> tuple[list[dict], list[str], int]:
+    files: list[dict] = []
+    directories: list[str] = []
     total_bytes = 0
-    file_count = 0
-    directory_count = 0
 
-    for root, dirs, files in os.walk(directory, followlinks=False):
-        directory_count += len(dirs)
-        for filename in files:
-            path = Path(root) / filename
+    for root, dirs, names in os.walk(source, followlinks=False):
+        root_path = Path(root)
+        relative_root = root_path.relative_to(source)
+
+        usable_dirs: list[str] = []
+        for dirname in dirs:
+            directory = root_path / dirname
+            if directory.is_symlink():
+                continue
+            usable_dirs.append(dirname)
+            directories.append(str((relative_root / dirname).as_posix()))
+        dirs[:] = usable_dirs
+
+        for name in names:
+            path = root_path / name
             try:
                 if path.is_symlink():
                     continue
-                total_bytes += path.stat().st_size
-                file_count += 1
+                stat = path.stat()
             except (PermissionError, FileNotFoundError, OSError):
                 continue
+            relative = str(path.relative_to(source).as_posix())
+            files.append(
+                {
+                    "path": path,
+                    "relative": relative,
+                    "size": stat.st_size,
+                    "mtime_ns": stat.st_mtime_ns,
+                }
+            )
+            total_bytes += stat.st_size
 
-    return total_bytes, file_count, directory_count
+    return files, directories, total_bytes
+
+
+def _directory_size(directory: Path) -> tuple[int, int, int]:
+    files, directories, total_bytes = _scan_source(directory)
+    return total_bytes, len(files), len(directories)
 
 
 def _next_daily(schedule: dict, timezone: ZoneInfo, now: datetime) -> datetime | None:
@@ -323,33 +355,111 @@ def _validate_backup_paths(source: Path, destination: Path) -> None:
         raise HTTPException(status_code=400, detail="Source cannot be inside the destination folder.")
 
 
-def _scan_source(source: Path) -> tuple[list[tuple[Path, str, int, int]], list[str], int]:
-    files: list[tuple[Path, str, int, int]] = []
-    directories: list[str] = []
-    total_bytes = 0
-    for root, dirs, names in os.walk(source, followlinks=False):
-        root_path = Path(root)
-        relative_root = root_path.relative_to(source)
-        for dirname in dirs:
-            directory = root_path / dirname
-            if directory.is_symlink():
+def _repository_meta_path(repository: Path) -> Path:
+    return repository / REPOSITORY_META_DIR / "repository.json"
+
+
+def _load_repository_meta(repository: Path) -> dict:
+    path = _repository_meta_path(repository)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_repository_meta(repository: Path, data: dict) -> None:
+    meta_dir = repository / REPOSITORY_META_DIR
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    path = meta_dir / "repository.json"
+    temp = meta_dir / ".repository.json.tmp"
+    temp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(temp, path)
+
+
+def _completed_snapshots(repository: Path) -> list[Path]:
+    snapshots: list[Path] = []
+    try:
+        for entry in repository.iterdir():
+            if not entry.is_dir() or entry.name.startswith("."):
                 continue
-            directories.append(str((relative_root / dirname).as_posix()))
-        for name in names:
-            path = root_path / name
+            if not any(entry.name.endswith(suffix) or f"{suffix}_" in entry.name for suffix in SNAPSHOT_SUFFIXES):
+                continue
+            manifest = entry / REPOSITORY_META_DIR / "manifest.json"
             try:
-                if path.is_symlink():
-                    continue
-                stat = path.stat()
-            except (PermissionError, FileNotFoundError, OSError):
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("status") == "completed":
+                    snapshots.append(entry)
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
                 continue
-            relative = str(path.relative_to(source).as_posix())
-            files.append((path, relative, stat.st_size, stat.st_mtime_ns))
-            total_bytes += stat.st_size
-    return files, directories, total_bytes
+    except OSError:
+        return []
+    snapshots.sort(key=lambda path: path.name)
+    return snapshots
 
 
-def _copy_file_with_progress(source_file: Path, destination_file: Path, file_size: int) -> int:
+def _latest_snapshot(repository: Path) -> Path | None:
+    snapshots = _completed_snapshots(repository)
+    return snapshots[-1] if snapshots else None
+
+
+def _hardlink_capability(repository: Path) -> bool:
+    test_id = uuid.uuid4().hex[:10]
+    source = repository / f".jayn-vault-link-source-{test_id}"
+    linked = repository / f".jayn-vault-link-target-{test_id}"
+    try:
+        source.write_bytes(b"JAYN")
+        os.link(source, linked)
+        return linked.exists() and source.stat().st_ino == linked.stat().st_ino
+    except OSError:
+        return False
+    finally:
+        for path in (linked, source):
+            try:
+                if path.exists():
+                    path.unlink()
+            except OSError:
+                pass
+
+
+def _file_matches_previous(file_info: dict, previous_snapshot: Path | None) -> Path | None:
+    if previous_snapshot is None:
+        return None
+    previous_file = previous_snapshot / file_info["relative"]
+    try:
+        stat = previous_file.stat()
+        if previous_file.is_file() and stat.st_size == file_info["size"] and stat.st_mtime_ns == file_info["mtime_ns"]:
+            return previous_file
+    except (FileNotFoundError, PermissionError, OSError):
+        pass
+    return None
+
+
+def _plan_required_bytes(files: list[dict], previous_snapshot: Path | None, hardlink_supported: bool) -> tuple[int, int]:
+    if previous_snapshot is None or not hardlink_supported:
+        return sum(int(item["size"]) for item in files), 0
+
+    required = 0
+    reusable = 0
+    for item in files:
+        if _file_matches_previous(item, previous_snapshot) is not None:
+            reusable += 1
+        else:
+            required += int(item["size"])
+    return required, reusable
+
+
+def _snapshot_name(started: datetime, trigger: str, repository: Path) -> str:
+    base = f"{started.strftime('%Y-%m-%d_%H-%M-%S')}_{trigger}"
+    candidate = base
+    counter = 1
+    while (repository / candidate).exists() or (repository / f".{candidate}.inprogress").exists():
+        candidate = f"{base}_{counter:02d}"
+        counter += 1
+    return candidate
+
+
+def _copy_file_with_progress(source_file: Path, destination_file: Path) -> int:
     temp_file = destination_file.with_name(f".{destination_file.name}.jayn-vault-part")
     copied = 0
     destination_file.parent.mkdir(parents=True, exist_ok=True)
@@ -361,9 +471,10 @@ def _copy_file_with_progress(source_file: Path, destination_file: Path, file_siz
                     break
                 dst.write(chunk)
                 copied += len(chunk)
+                state = _snapshot_job()
                 _set_job(
-                    processed_bytes=int(_snapshot_job().get("processed_bytes") or 0) + len(chunk),
-                    copied_bytes=int(_snapshot_job().get("copied_bytes") or 0) + len(chunk),
+                    processed_bytes=int(state.get("processed_bytes") or 0) + len(chunk),
+                    copied_bytes=int(state.get("copied_bytes") or 0) + len(chunk),
                 )
         shutil.copystat(source_file, temp_file, follow_symlinks=False)
         os.replace(temp_file, destination_file)
@@ -376,22 +487,38 @@ def _copy_file_with_progress(source_file: Path, destination_file: Path, file_siz
             pass
 
 
-def _run_backup_worker(job_id: str, source: Path, destination: Path) -> None:
+def _write_manifest(snapshot_root: Path, payload: dict) -> None:
+    meta_dir = snapshot_root / REPOSITORY_META_DIR
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    path = meta_dir / "manifest.json"
+    temp = meta_dir / ".manifest.json.tmp"
+    temp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(temp, path)
+
+
+def _run_backup_worker(job_id: str, source: Path, repository: Path, trigger: str = "manual") -> None:
     started = datetime.now().astimezone()
+    inprogress: Path | None = None
     try:
         _set_job(
             id=job_id,
             status="running",
             phase="scanning",
             percent=0.0,
+            trigger=trigger,
             source=str(source),
-            destination=str(destination),
+            destination=str(repository),
+            snapshot=None,
+            previous_snapshot=None,
+            hardlink_supported=None,
             total_files=0,
             processed_files=0,
             copied_files=0,
+            linked_files=0,
             skipped_files=0,
             failed_files=0,
             total_bytes=0,
+            required_bytes=0,
             processed_bytes=0,
             copied_bytes=0,
             current_file=None,
@@ -401,42 +528,64 @@ def _run_backup_worker(job_id: str, source: Path, destination: Path) -> None:
         )
 
         files, directories, total_bytes = _scan_source(source)
-        usage = shutil.disk_usage(destination)
-        if usage.free < total_bytes:
-            raise RuntimeError(f"Destination does not have enough free space. Short by {total_bytes - usage.free} bytes.")
+        previous_snapshot = _latest_snapshot(repository)
+        hardlink_supported = _hardlink_capability(repository)
+        required_bytes, reusable_files = _plan_required_bytes(files, previous_snapshot, hardlink_supported)
+        usage = shutil.disk_usage(repository)
+        if usage.free < required_bytes:
+            raise RuntimeError(f"Destination does not have enough free space. Short by {required_bytes - usage.free} bytes.")
+
+        snapshot_name = _snapshot_name(started, trigger, repository)
+        final_snapshot = repository / snapshot_name
+        inprogress = repository / f".{snapshot_name}.inprogress"
+        inprogress.mkdir(parents=False, exist_ok=False)
 
         for relative in directories:
-            (destination / relative).mkdir(parents=True, exist_ok=True)
+            (inprogress / relative).mkdir(parents=True, exist_ok=True)
 
-        _set_job(phase="copying", total_files=len(files), total_bytes=total_bytes)
+        _set_job(
+            phase="copying",
+            snapshot=snapshot_name,
+            previous_snapshot=previous_snapshot.name if previous_snapshot else None,
+            hardlink_supported=hardlink_supported,
+            total_files=len(files),
+            total_bytes=total_bytes,
+            required_bytes=required_bytes,
+        )
 
-        for source_file, relative, file_size, source_mtime_ns in files:
-            destination_file = destination / relative
+        for item in files:
+            source_file = Path(item["path"])
+            relative = str(item["relative"])
+            file_size = int(item["size"])
+            target = inprogress / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
             _set_job(current_file=relative)
 
             try:
-                unchanged = False
-                if destination_file.exists() and destination_file.is_file():
+                previous_file = _file_matches_previous(item, previous_snapshot) if hardlink_supported else None
+                if previous_file is not None:
                     try:
-                        dest_stat = destination_file.stat()
-                        unchanged = dest_stat.st_size == file_size and dest_stat.st_mtime_ns == source_mtime_ns
+                        os.link(previous_file, target)
+                        state = _snapshot_job()
+                        _set_job(
+                            processed_bytes=int(state.get("processed_bytes") or 0) + file_size,
+                            processed_files=int(state.get("processed_files") or 0) + 1,
+                            linked_files=int(state.get("linked_files") or 0) + 1,
+                            skipped_files=int(state.get("skipped_files") or 0) + 1,
+                        )
+                        continue
                     except OSError:
-                        unchanged = False
+                        # Capability was confirmed, but a per-file hard link can still fail.
+                        # Fall back to a physical copy after re-checking free space.
+                        if shutil.disk_usage(repository).free < file_size:
+                            raise RuntimeError(f"Not enough free space to fall back to copying {relative}.")
 
+                _copy_file_with_progress(source_file, target)
                 state = _snapshot_job()
-                if unchanged:
-                    _set_job(
-                        processed_bytes=int(state.get("processed_bytes") or 0) + file_size,
-                        processed_files=int(state.get("processed_files") or 0) + 1,
-                        skipped_files=int(state.get("skipped_files") or 0) + 1,
-                    )
-                else:
-                    _copy_file_with_progress(source_file, destination_file, file_size)
-                    state = _snapshot_job()
-                    _set_job(
-                        processed_files=int(state.get("processed_files") or 0) + 1,
-                        copied_files=int(state.get("copied_files") or 0) + 1,
-                    )
+                _set_job(
+                    processed_files=int(state.get("processed_files") or 0) + 1,
+                    copied_files=int(state.get("copied_files") or 0) + 1,
+                )
             except Exception:
                 state = _snapshot_job()
                 _set_job(
@@ -446,11 +595,67 @@ def _run_backup_worker(job_id: str, source: Path, destination: Path) -> None:
                 raise
 
         finished = datetime.now().astimezone()
-        final = _set_job(status="completed", phase="complete", percent=100.0, current_file=None, finished_at=finished.isoformat())
+        state = _snapshot_job()
+        manifest = {
+            "format_version": 1,
+            "status": "completed",
+            "job_id": job_id,
+            "trigger": trigger,
+            "snapshot": snapshot_name,
+            "previous_snapshot": previous_snapshot.name if previous_snapshot else None,
+            "hardlink_supported": hardlink_supported,
+            "source": str(source),
+            "repository": str(repository),
+            "started_at": started.isoformat(),
+            "finished_at": finished.isoformat(),
+            "total_files": len(files),
+            "logical_bytes": total_bytes,
+            "physical_bytes_written": int(state.get("copied_bytes") or 0),
+            "required_bytes_estimate": required_bytes,
+            "copied_files": int(state.get("copied_files") or 0),
+            "reused_files": int(state.get("linked_files") or 0),
+            "failed_files": int(state.get("failed_files") or 0),
+        }
+        _write_manifest(inprogress, manifest)
+        os.replace(inprogress, final_snapshot)
+        inprogress = None
+
+        snapshots = _completed_snapshots(repository)
+        _save_repository_meta(
+            repository,
+            {
+                "format_version": 1,
+                "mode": "hardlink-snapshots" if hardlink_supported else "full-snapshots",
+                "hardlink_supported": hardlink_supported,
+                "latest_snapshot": snapshot_name,
+                "snapshot_count": len(snapshots),
+                "updated_at": finished.isoformat(),
+            },
+        )
+
+        final = _set_job(
+            status="completed",
+            phase="complete",
+            percent=100.0,
+            current_file=None,
+            snapshot=snapshot_name,
+            finished_at=finished.isoformat(),
+        )
         _append_history(final)
     except Exception as exc:
+        if inprogress is not None:
+            try:
+                shutil.rmtree(inprogress)
+            except OSError:
+                pass
         finished = datetime.now().astimezone()
-        final = _set_job(status="failed", phase="failed", current_file=None, finished_at=finished.isoformat(), error=str(exc))
+        final = _set_job(
+            status="failed",
+            phase="failed",
+            current_file=None,
+            finished_at=finished.isoformat(),
+            error=str(exc),
+        )
         _append_history(final)
 
 
@@ -549,34 +754,81 @@ def storage_status() -> dict:
 
     source = None
     destination = None
+    source_files: list[dict] = []
 
     if source_raw:
         source_path = _resolve_dir(source_raw)
         if not os.access(source_path, os.R_OK | os.X_OK):
             raise HTTPException(status_code=403, detail="The configured source is not readable.")
-        total_bytes, file_count, directory_count = _directory_size(source_path)
-        source = {"path": str(source_path), "bytes": total_bytes, "files": file_count, "directories": directory_count}
+        source_files, directories, total_bytes = _scan_source(source_path)
+        source = {
+            "path": str(source_path),
+            "bytes": total_bytes,
+            "files": len(source_files),
+            "directories": len(directories),
+        }
+
+    required_bytes = source["bytes"] if source is not None else 0
+    reusable_files = 0
 
     if destination_raw:
         destination_path = _resolve_dir(destination_raw)
         if not os.access(destination_path, os.W_OK | os.X_OK):
             raise HTTPException(status_code=403, detail="The configured destination is not writable.")
         usage = shutil.disk_usage(destination_path)
+        meta = _load_repository_meta(destination_path)
+        previous = _latest_snapshot(destination_path)
+        hardlink_supported = bool(meta.get("hardlink_supported")) if previous is not None else None
+        if source is not None and previous is not None and hardlink_supported:
+            required_bytes, reusable_files = _plan_required_bytes(source_files, previous, True)
+        snapshots = _completed_snapshots(destination_path)
         destination = {
             "path": str(destination_path),
             "total_bytes": usage.total,
             "used_bytes": usage.used,
             "free_bytes": usage.free,
+            "required_bytes": required_bytes,
+            "reusable_files": reusable_files,
+            "snapshot_count": len(snapshots),
+            "latest_snapshot": snapshots[-1].name if snapshots else None,
+            "hardlink_supported": hardlink_supported,
         }
 
     capacity_ok = None
     shortfall_bytes = 0
     if source is not None and destination is not None:
-        capacity_ok = destination["free_bytes"] >= source["bytes"]
+        capacity_ok = destination["free_bytes"] >= required_bytes
         if not capacity_ok:
-            shortfall_bytes = source["bytes"] - destination["free_bytes"]
+            shortfall_bytes = required_bytes - destination["free_bytes"]
 
-    return {"source": source, "destination": destination, "capacity_ok": capacity_ok, "shortfall_bytes": shortfall_bytes}
+    return {
+        "source": source,
+        "destination": destination,
+        "capacity_ok": capacity_ok,
+        "shortfall_bytes": shortfall_bytes,
+        "required_bytes": required_bytes,
+        "reusable_files": reusable_files,
+    }
+
+
+@app.get("/api/repository/status")
+def repository_status() -> dict:
+    data = _load_config()
+    destination_raw = data.get("destination")
+    if not destination_raw:
+        return {"configured": False, "snapshot_count": 0, "latest_snapshot": None}
+    repository = _resolve_dir(destination_raw)
+    snapshots = _completed_snapshots(repository)
+    meta = _load_repository_meta(repository)
+    return {
+        "configured": True,
+        "path": str(repository),
+        "snapshot_count": len(snapshots),
+        "latest_snapshot": snapshots[-1].name if snapshots else None,
+        "hardlink_supported": meta.get("hardlink_supported"),
+        "mode": meta.get("mode"),
+        "snapshots": [path.name for path in reversed(snapshots[-20:])],
+    }
 
 
 @app.get("/api/jobs/current")
@@ -597,33 +849,36 @@ def run_backup_now() -> dict:
         raise HTTPException(status_code=400, detail="Both a source and destination must be selected before running a backup.")
 
     source = _resolve_dir(source_raw)
-    destination = _resolve_dir(destination_raw)
-    _validate_backup_paths(source, destination)
+    repository = _resolve_dir(destination_raw)
+    _validate_backup_paths(source, repository)
 
     if not os.access(source, os.R_OK | os.X_OK):
         raise HTTPException(status_code=403, detail="The configured source is not readable.")
-    if not os.access(destination, os.W_OK | os.X_OK):
+    if not os.access(repository, os.W_OK | os.X_OK):
         raise HTTPException(status_code=403, detail="The configured destination is not writable.")
 
-    total_bytes, _, _ = _directory_size(source)
-    usage = shutil.disk_usage(destination)
-    if usage.free < total_bytes:
-        raise HTTPException(status_code=409, detail=f"Destination does not have enough free space. Short by {total_bytes - usage.free} bytes.")
-
+    # Worker performs the authoritative scan, hard-link capability test, and
+    # capacity preflight immediately before creating the snapshot.
     job_id = uuid.uuid4().hex[:12]
     _set_job(
         id=job_id,
         status="running",
         phase="starting",
         percent=0.0,
+        trigger="manual",
         source=str(source),
-        destination=str(destination),
+        destination=str(repository),
+        snapshot=None,
+        previous_snapshot=None,
+        hardlink_supported=None,
         total_files=0,
         processed_files=0,
         copied_files=0,
+        linked_files=0,
         skipped_files=0,
         failed_files=0,
-        total_bytes=total_bytes,
+        total_bytes=0,
+        required_bytes=0,
         processed_bytes=0,
         copied_bytes=0,
         current_file=None,
@@ -632,7 +887,7 @@ def run_backup_now() -> dict:
         error=None,
     )
 
-    thread = threading.Thread(target=_run_backup_worker, args=(job_id, source, destination), daemon=True)
+    thread = threading.Thread(target=_run_backup_worker, args=(job_id, source, repository, "manual"), daemon=True)
     thread.start()
     return _snapshot_job()
 
