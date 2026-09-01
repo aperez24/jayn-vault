@@ -15,6 +15,9 @@ export default function RecoveryDestinationPicker({ onSelect, onClose }) {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [folderName, setFolderName] = useState('')
+  const [creating, setCreating] = useState(false)
 
   async function loadDirectory(path) {
     setLoading(true)
@@ -30,6 +33,30 @@ export default function RecoveryDestinationPicker({ onSelect, onClose }) {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function createFolder(event) {
+    event.preventDefault()
+    const name = folderName.trim()
+    if (!name || !currentPath || creating) return
+    setCreating(true)
+    setError('')
+    try {
+      const response = await fetch('/api/restore/recovery/folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parent: currentPath, name }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Unable to create folder.')
+      setCreatingFolder(false)
+      setFolderName('')
+      await loadDirectory(data.path)
+    } catch (err) {
+      setError(err.message || 'Unable to create folder.')
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -54,10 +81,18 @@ export default function RecoveryDestinationPicker({ onSelect, onClose }) {
   }, [])
 
   useEffect(() => {
-    const handleKey = (event) => { if (event.key === 'Escape') onClose?.() }
+    const handleKey = (event) => {
+      if (event.key !== 'Escape') return
+      if (creatingFolder) {
+        setCreatingFolder(false)
+        setFolderName('')
+      } else {
+        onClose?.()
+      }
+    }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [onClose])
+  }, [onClose, creatingFolder])
 
   const directories = useMemo(() => items.filter((item) => item.type === 'directory'), [items])
   const relativeParts = useMemo(() => {
@@ -85,14 +120,24 @@ export default function RecoveryDestinationPicker({ onSelect, onClose }) {
         <button type="button" className="picker-close" onClick={onClose} aria-label="Close folder picker"><CloseIcon /></button>
       </header>
       <nav className="picker-breadcrumbs" aria-label="Current folder path">{breadcrumbs.map((crumb, index) => <span key={crumb.path}>{index > 0 && <i>›</i>}<button type="button" onClick={() => loadDirectory(crumb.path)} disabled={loading || crumb.path === currentPath}>{crumb.name}</button></span>)}</nav>
-      <div className="picker-location-bar"><div className="picker-location-copy"><span>RECOVERY LOCATION</span><strong title={currentPath}>{displayPath}</strong></div>{canGoUp && <button type="button" className="picker-up" onClick={() => loadDirectory(parent)} disabled={loading}>↑ &nbsp; Up</button>}</div>
+      <div className="picker-location-bar">
+        <div className="picker-location-copy"><span>RECOVERY LOCATION</span><strong title={currentPath}>{displayPath}</strong></div>
+        <div className="picker-location-actions">
+          {canGoUp && <button type="button" className="picker-up" onClick={() => loadDirectory(parent)} disabled={loading || creating}>↑ &nbsp; Up</button>}
+          <button type="button" className="picker-new-folder" onClick={() => { setCreatingFolder((value) => !value); setFolderName(''); setError('') }} disabled={loading || creating}>+ &nbsp; New folder</button>
+        </div>
+      </div>
+      {creatingFolder && <form className="picker-new-folder-form" onSubmit={createFolder}>
+        <div><span>NEW FOLDER</span><input autoFocus value={folderName} onChange={(event) => setFolderName(event.target.value)} placeholder="Folder name" maxLength={120} disabled={creating} /></div>
+        <div className="picker-new-folder-actions"><button type="button" onClick={() => { setCreatingFolder(false); setFolderName('') }} disabled={creating}>Cancel</button><button type="submit" disabled={creating || !folderName.trim()}>{creating ? 'Creating…' : 'Create folder'}</button></div>
+      </form>}
       {error && <div className="picker-error">{error}</div>}
       <div className="picker-list" aria-busy={loading}>
         {loading && <div className="picker-state">Reading folders…</div>}
-        {!loading && directories.length === 0 && <div className="picker-state"><FolderIcon /><strong>This folder has no subfolders.</strong><span>You can recover into the current folder.</span></div>}
+        {!loading && directories.length === 0 && <div className="picker-state"><FolderIcon /><strong>This folder has no subfolders.</strong><span>You can recover into the current folder or create a new one.</span></div>}
         {!loading && directories.map((item) => <button type="button" className="picker-row" key={item.path} onClick={() => loadDirectory(item.path)}><span className="picker-folder"><FolderIcon /></span><span className="picker-row-copy"><strong>{item.name}</strong><small>{item.writable ? 'Read & write available' : 'Unavailable'}</small></span><span className="picker-row-arrow">›</span></button>)}
       </div>
-      <footer className="picker-footer"><div className="picker-saved"><span>SAFE RECOVERY MODE</span><strong>A new JAYN-Vault-Recovery folder will be created here.</strong></div><div className="picker-actions"><button type="button" className="picker-cancel" onClick={onClose}>Cancel</button><button type="button" className="picker-select" onClick={() => onSelect?.(currentPath)} disabled={loading || !currentPath}>Recover here</button></div></footer>
+      <footer className="picker-footer"><div className="picker-saved"><span>SAFE RECOVERY MODE</span><strong>A new JAYN-Vault-Recovery folder will be created here.</strong></div><div className="picker-actions"><button type="button" className="picker-cancel" onClick={onClose}>Cancel</button><button type="button" className="picker-select" onClick={() => onSelect?.(currentPath)} disabled={loading || creating || !currentPath}>Recover here</button></div></footer>
     </section>
   </div>
 }
