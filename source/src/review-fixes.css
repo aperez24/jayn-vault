@@ -114,9 +114,10 @@
 }
 
 /*
- * Desktop composition: use the same centered visual frame as the hero above.
- * No independent horizontal offset; the control surface should share the
- * hero's centerline and read as one continuous composition.
+ * Desktop composition: use one shared frame for the full control surface.
+ * The recovered stylesheet places max-widths on the children as well as the
+ * parent, so reset both levels; otherwise the outer section can be wide while
+ * the visible rule/head/nav still float as a narrow island.
  */
 @media (min-width: 901px) {
   .control-surface {
@@ -124,17 +125,31 @@
     max-width: none !important;
     margin-left: auto !important;
     margin-right: auto !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
     transform: translateY(-68px) !important;
   }
 
-  .surface-tags,
-  .surface-head,
-  .lens-nav {
-    width: 100%;
+  .control-surface > .surface-tags,
+  .control-surface > .surface-head,
+  .control-surface > .lens-nav {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
   }
 
-  .lens-nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .control-surface > .surface-head {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  .control-surface > .lens-nav {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
   }
 }
 
