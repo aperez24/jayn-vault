@@ -1,0 +1,55 @@
+/* Sep 1 review refinements: schedule affordance + shared desktop grid. */
+
+/* Daily / Weekly schedule editing should read as an intentional control. */
+.dial-wrap.mode-daily .dial-slot-actions > button,
+.dial-wrap.mode-weekly .dial-slot-actions > button {
+  min-width: 176px;
+  justify-content: center;
+  border: 1px solid rgba(246, 130, 31, .58) !important;
+  background: rgba(246, 130, 31, .055) !important;
+  color: rgba(244, 246, 243, .9) !important;
+  border-radius: 999px;
+  padding: 8px 15px !important;
+  cursor: pointer;
+  transition: border-color .22s ease, background .22s ease, color .22s ease, box-shadow .22s ease;
+}
+
+.dial-wrap.mode-daily .dial-slot-actions > button:hover,
+.dial-wrap.mode-weekly .dial-slot-actions > button:hover {
+  border-color: var(--orange) !important;
+  background: rgba(246, 130, 31, .12) !important;
+  color: #fff !important;
+  box-shadow: 0 0 0 1px rgba(246, 130, 31, .08), 0 0 22px rgba(246, 130, 31, .09);
+}
+
+.dial-wrap.mode-daily .dial-slot-actions > button .chevron-icon,
+.dial-wrap.mode-weekly .dial-slot-actions > button .chevron-icon {
+  width: 13px;
+  height: 13px;
+  margin-left: 7px;
+}
+
+/* Match the control surface to the visual span of the hero above it. */
+@media (min-width: 901px) {
+  .control-surface {
+    width: min(960px, calc(100vw - 56px)) !important;
+    max-width: none !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+
+  .surface-tags,
+  .surface-head,
+  .lens-nav,
+  .selection-summary {
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .dial-wrap.mode-daily .dial-slot-actions > button,
+  .dial-wrap.mode-weekly .dial-slot-actions > button {
+    min-width: 0;
+    border-radius: 999px;
+  }
+}
