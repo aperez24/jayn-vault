@@ -113,19 +113,28 @@
   min-width: 0;
 }
 
-/* Match the control surface to the visual span of the hero above it. */
+/*
+ * Desktop composition: the hero is intentionally offset left rather than
+ * viewport-centered. Match that same visual grid so the control surface reads
+ * as a continuation of the hero instead of a separate floating island.
+ */
 @media (min-width: 901px) {
   .control-surface {
-    width: min(960px, calc(100vw - 56px)) !important;
+    width: min(1240px, calc(100vw - 72px)) !important;
     max-width: none !important;
     margin-left: auto !important;
     margin-right: auto !important;
+    transform: translate(-70px, -68px) !important;
   }
 
   .surface-tags,
   .surface-head,
   .lens-nav {
     width: 100%;
+  }
+
+  .lens-nav {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
