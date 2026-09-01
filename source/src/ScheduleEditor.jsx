@@ -24,6 +24,14 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
     setEnabled(config?.enabled ?? true)
   }, [mode, schedule])
 
+  function openTimePicker(event) {
+    try {
+      event.currentTarget.showPicker?.()
+    } catch {
+      // Browsers without showPicker still retain normal type="time" behavior.
+    }
+  }
+
   async function save() {
     setSaving(true)
     setError('')
@@ -83,7 +91,14 @@ export default function ScheduleEditor({ mode, schedule, onClose, onSaved }) {
 
           <label className="schedule-field">
             <span>TIME</span>
-            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} />
+            <input
+              className="schedule-time-input"
+              type="time"
+              value={time}
+              onChange={(event) => setTime(event.target.value)}
+              onClick={openTimePicker}
+              aria-label={`${label} backup time`}
+            />
           </label>
 
           <label className="schedule-toggle">
