@@ -47,7 +47,8 @@
 .schedule-field > span,
 .schedule-timezone > span { color: #637068; letter-spacing: .18em; font-size: 8px; }
 .schedule-field select,
-.schedule-field input {
+.schedule-field input,
+.schedule-timezone select {
   width: 100%;
   border: 1px solid #eaefe820;
   background: #0d100e;
@@ -57,7 +58,8 @@
   outline: none;
 }
 .schedule-field select:focus,
-.schedule-field input:focus { border-color: #f6821f77; }
+.schedule-field input:focus,
+.schedule-timezone select:focus { border-color: #f6821f77; }
 .schedule-field.is-disabled { opacity: .38; }
 .schedule-field.is-disabled > span { color: #4b554f; }
 .schedule-field select:disabled,
@@ -146,14 +148,13 @@
 }
 
 .schedule-timezone {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 7px;
   border-top: 1px solid #eaefe813;
   padding-top: 12px;
 }
-.schedule-timezone strong { color: #aab4ac; font-size: 10px; font-weight: 400; }
+.schedule-timezone select { cursor: pointer; }
+.schedule-timezone small { color: #68736c; font-size: 8px; line-height: 1.4; }
 .schedule-error { color: #dfac82; background: #f6821f0b; border: 1px solid #f6821f35; padding: 10px 12px; font-size: 9px; }
 
 .schedule-footer {
