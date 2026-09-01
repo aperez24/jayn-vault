@@ -115,18 +115,20 @@
 
 /*
  * Desktop composition: use one shared frame for the full control surface.
- * The recovered stylesheet places max-widths on the children as well as the
- * parent, so reset both levels; otherwise the outer section can be wide while
- * the visible rule/head/nav still float as a narrow island.
+ * The right edge is already aligned with the hero; add a small amount of
+ * width and offset by half of that amount so the extra span is applied only
+ * to the left edge.
  */
 @media (min-width: 901px) {
   .control-surface {
-    width: min(940px, calc(100vw - 72px)) !important;
+    width: min(976px, calc(100vw - 72px)) !important;
     max-width: none !important;
     margin-left: auto !important;
     margin-right: auto !important;
     padding-left: 0 !important;
     padding-right: 0 !important;
+    position: relative;
+    left: -18px;
     transform: translateY(-68px) !important;
   }
 
