@@ -321,8 +321,8 @@ export default function App() {
       model.telemetry = storageStatus.destination ? (capacityWarning ? 'INSUFFICIENT AVAILABLE CAPACITY' : 'AVAILABLE CAPACITY VERIFIED') : active.telemetry
       model.title = capacityWarning ? 'Destination capacity low.' : selectionPath ? 'Destination configured.' : active.title
       model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
-      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationTotal} TOTAL CAPACITY`) : active.metric
-      model.meta = storageStatus.destination ? (capacityWarning ? `TOTAL ${destinationTotal}` : 'CAPACITY READY') : ''
+      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : destinationTotal) : active.metric
+      model.meta = storageStatus.destination ? (capacityWarning ? `TOTAL ${destinationTotal}` : 'TOTAL CAPACITY') : ''
       model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
       model.actionClass = selectionPath ? 'folder-name-button' : ''
       model.onAction = () => setPickerKind('destination')
