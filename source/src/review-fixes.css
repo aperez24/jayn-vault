@@ -113,6 +113,19 @@
   min-width: 0;
 }
 
+/* Center the destination capacity readout on the same axis as the dial copy. */
+.dial-wrap.mode-destinations .dial-slot-metrics {
+  width: 100% !important;
+  text-align: center !important;
+  justify-content: center !important;
+  align-items: center !important;
+}
+
+.dial-wrap.mode-destinations .dial-slot-metrics strong,
+.dial-wrap.mode-destinations .dial-slot-metrics small {
+  text-align: center !important;
+}
+
 /*
  * Desktop composition: use one shared frame for the full control surface.
  * The right edge is already aligned with the hero; add a small amount of
