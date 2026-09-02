@@ -317,11 +317,11 @@ export default function App() {
     if (lens === 'Destinations') {
       model.value = storageStatus.destination ? destinationFreeParts.value : active.value
       model.suffix = storageStatus.destination ? destinationFreeParts.unit : active.suffix
-      model.kicker = storageStatus.destination ? 'FREE SPACE' : active.kicker
-      model.telemetry = storageStatus.destination ? (capacityWarning ? 'INSUFFICIENT FREE SPACE' : 'CAPACITY AVAILABLE') : active.telemetry
+      model.kicker = storageStatus.destination ? 'AVAILABLE CAPACITY' : active.kicker
+      model.telemetry = storageStatus.destination ? (capacityWarning ? 'INSUFFICIENT AVAILABLE CAPACITY' : 'AVAILABLE CAPACITY VERIFIED') : active.telemetry
       model.title = capacityWarning ? 'Destination capacity low.' : selectionPath ? 'Destination configured.' : active.title
       model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
-      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationTotal} TOTAL`) : active.metric
+      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationTotal} TOTAL CAPACITY`) : active.metric
       model.meta = storageStatus.destination ? (capacityWarning ? `TOTAL ${destinationTotal}` : 'CAPACITY READY') : ''
       model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
       model.actionClass = selectionPath ? 'folder-name-button' : ''
