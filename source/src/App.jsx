@@ -234,8 +234,9 @@ export default function App() {
   }, [selectionPath])
 
   const sourceSize = formatBytesParts(storageStatus.source?.bytes)
-  const destinationTotal = formatBytesParts(storageStatus.destination?.total_bytes)
+  const destinationFreeParts = formatBytesParts(storageStatus.destination?.free_bytes)
   const destinationFree = formatBytes(storageStatus.destination?.free_bytes)
+  const destinationTotal = formatBytes(storageStatus.destination?.total_bytes)
   const sourceSizeText = formatBytes(storageStatus.source?.bytes)
   const timezone = schedule?.timezone || 'America/New_York'
   const lastDaily = useMemo(() => jobHistory.find((item) => item?.trigger === 'daily') || null, [jobHistory])
@@ -314,21 +315,21 @@ export default function App() {
     }
 
     if (lens === 'Destinations') {
-      model.value = storageStatus.destination ? destinationTotal.value : active.value
-      model.suffix = storageStatus.destination ? destinationTotal.unit : active.suffix
-      model.kicker = storageStatus.destination ? 'TOTAL CAPACITY' : active.kicker
-      model.telemetry = storageStatus.destination ? (capacityWarning ? 'INSUFFICIENT FREE SPACE' : 'FREE SPACE VERIFIED') : active.telemetry
+      model.value = storageStatus.destination ? destinationFreeParts.value : active.value
+      model.suffix = storageStatus.destination ? destinationFreeParts.unit : active.suffix
+      model.kicker = storageStatus.destination ? 'FREE SPACE' : active.kicker
+      model.telemetry = storageStatus.destination ? (capacityWarning ? 'INSUFFICIENT FREE SPACE' : 'CAPACITY AVAILABLE') : active.telemetry
       model.title = capacityWarning ? 'Destination capacity low.' : selectionPath ? 'Destination configured.' : active.title
       model.detail = selectionPath ? friendlySelectionPath : `${active.detail} → ${active.route}`
-      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationFree} FREE`) : active.metric
-      model.meta = storageStatus.destination ? (capacityWarning ? 'CAPACITY ALERT' : 'CAPACITY READY') : ''
+      model.metric = storageStatus.destination ? (capacityWarning ? `SHORT ${formatBytes(storageStatus.shortfall_bytes)}` : `${destinationTotal} TOTAL`) : active.metric
+      model.meta = storageStatus.destination ? (capacityWarning ? `TOTAL ${destinationTotal}` : 'CAPACITY READY') : ''
       model.actionLabel = selectionPath ? selectedFolderLabel : 'CHANGE FOLDER'
       model.actionClass = selectionPath ? 'folder-name-button' : ''
       model.onAction = () => setPickerKind('destination')
     }
 
     return model
-  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationTotal.value, destinationTotal.unit, destinationFree, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, running, job, lastDaily, lastWeekly])
+  }, [active, lens, schedule, timezone, storageStatus, sourceSize.value, sourceSize.unit, sourceSizeText, destinationFreeParts.value, destinationFreeParts.unit, destinationFree, destinationTotal, capacityWarning, selectionPath, friendlySelectionPath, selectedFolderLabel, running, job, lastDaily, lastWeekly])
 
   const runBackup = async () => {
     if (running) return
