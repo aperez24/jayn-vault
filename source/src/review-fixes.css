@@ -105,25 +105,53 @@
   display: none !important;
 }
 
-/* Keep metrics/action geometry stable while data loads. */
+/*
+ * Normalize the entire lower dial zone across all lenses. The metrics block and
+ * action remain on one shared vertical centerline regardless of text width.
+ */
 .dial-wrap.mode-daily .dial-slot-actions,
 .dial-wrap.mode-weekly .dial-slot-actions,
 .dial-wrap.mode-sources .dial-slot-actions,
 .dial-wrap.mode-destinations .dial-slot-actions {
   min-width: 0;
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
 }
 
-/* Center the destination capacity readout on the same axis as the dial copy. */
+.dial-wrap.mode-daily .dial-slot-metrics,
+.dial-wrap.mode-weekly .dial-slot-metrics,
+.dial-wrap.mode-sources .dial-slot-metrics,
 .dial-wrap.mode-destinations .dial-slot-metrics {
   width: 100% !important;
-  text-align: center !important;
+  max-width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  display: flex !important;
+  align-items: baseline !important;
   justify-content: center !important;
-  align-items: center !important;
+  text-align: center !important;
 }
 
+.dial-wrap.mode-daily .dial-slot-metrics strong,
+.dial-wrap.mode-daily .dial-slot-metrics small,
+.dial-wrap.mode-weekly .dial-slot-metrics strong,
+.dial-wrap.mode-weekly .dial-slot-metrics small,
+.dial-wrap.mode-sources .dial-slot-metrics strong,
+.dial-wrap.mode-sources .dial-slot-metrics small,
 .dial-wrap.mode-destinations .dial-slot-metrics strong,
 .dial-wrap.mode-destinations .dial-slot-metrics small {
   text-align: center !important;
+}
+
+.dial-wrap.mode-daily .dial-slot-actions > button,
+.dial-wrap.mode-weekly .dial-slot-actions > button,
+.dial-wrap.mode-sources .dial-slot-actions > button,
+.dial-wrap.mode-destinations .dial-slot-actions > button {
+  align-self: center !important;
 }
 
 /*
